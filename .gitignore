@@ -23,6 +23,13 @@ Thumbs.db
 !AGENTS.md
 !.mcp.json
 !openspec/
+# Per-tool native config dirs at repo root
+!.agents/
+!.agents/**
+!.opencode/
+!.opencode/coograph-init.md
+!.opencode/commands/
+!.opencode/commands/**
 # Per-tool template files (templates/ ships native config for each AI tool)
 !templates/
 !templates/**

@@ -144,8 +144,8 @@ Every supported tool understands the same `/coograph-init` command, but the regi
 |---|---|---|
 | **Claude Code** | `.claude/commands/coograph-init.md` | yes — appears in `/` menu |
 | **VS Code Copilot** | `.github/skills/coograph-init/SKILL.md` | yes — folder name = slash command |
-| **Codex CLI** | `.codex/prompts/coograph-init.md` | yes — file in project prompts dir |
-| **OpenCode** | `.opencode/command/coograph-init.md` | yes — custom command |
+| **Codex CLI** | `.agents/skills/coograph-init/SKILL.md` | yes — Codex scans `.agents/skills/` from repo root |
+| **OpenCode** | `.opencode/commands/coograph-init.md` | yes — custom command (plural `commands/` dir) |
 | **Cursor** | `.cursor/rules/coograph.mdc` § Invocation | no — type the string, rule fires |
 | **Windsurf** | `.windsurfrules` § Invocation | no — type the string, rule fires |
 | **Aider** | `CONVENTIONS.md` § Invocation | no — type the string, convention fires |

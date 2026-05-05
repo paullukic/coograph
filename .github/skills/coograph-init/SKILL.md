@@ -20,8 +20,8 @@ Ask the user these questions one at a time (wait for each answer before proceedi
 2. **Which AI tools should I set up for?** (multi-select — accept any combination)
    - **Claude Code** — `CLAUDE.md`, `.claude/commands/`, `.claude/hooks/`, `.claude/settings.json`
    - **VS Code Copilot** — `.github/agents/`, `.github/skills/`, `AGENTS.md`
-   - **Codex CLI** — `.codex/prompts/coograph-init.md` + `AGENTS.md` (native `/coograph-init` slash)
-   - **OpenCode** (sst/opencode) — `.opencode/command/coograph-init.md` + `AGENTS.md` (native `/coograph-init` slash)
+   - **Codex CLI** — `.agents/skills/coograph-init/SKILL.md` + `AGENTS.md` (Codex scans `.agents/skills/` from repo root for native slash)
+   - **OpenCode** (sst/opencode) — `.opencode/commands/coograph-init.md` + `AGENTS.md` (native `/coograph-init` slash)
    - **Cursor** — `.cursor/rules/coograph.mdc` (from `templates/cursor/`)
    - **Windsurf** — `.windsurfrules` (from `templates/windsurf/`)
    - **Aider** — `CONVENTIONS.md` (from `templates/aider/`)
@@ -93,14 +93,14 @@ Copy files from the coograph repo to the target project. Only copy what's releva
 - `AGENTS.md`
 
 **For Codex CLI:**
-- `.codex/prompts/coograph-init.md` (registers `/coograph-init` slash in Codex CLI)
+- `.agents/skills/coograph-init/SKILL.md` (Codex scans `.agents/skills/` from repo root and surfaces it as the `/coograph-init` slash)
 - `AGENTS.md` (auto-read by Codex CLI; same file as VS Code Copilot — copy once)
-- `.github/skills/coograph-init/` (the actual procedure the slash command points to)
+- `.github/skills/coograph-init/` (the canonical procedure the Codex skill delegates to)
 
 **For OpenCode:**
-- `.opencode/command/coograph-init.md` (registers `/coograph-init` slash in OpenCode)
+- `.opencode/commands/coograph-init.md` (registers `/coograph-init` slash in OpenCode — note the plural `commands/`)
 - `AGENTS.md` (auto-read by OpenCode; same file as VS Code Copilot — copy once)
-- `.github/skills/coograph-init/` (the actual procedure the slash command points to)
+- `.github/skills/coograph-init/` (the canonical procedure the OpenCode command delegates to)
 
 **For Cursor:**
 - `templates/cursor/.cursor/` → target project's `.cursor/` (preserves rules subdirectory structure)

@@ -24,8 +24,8 @@ Type **`/coograph-init`** in your AI tool's chat — every supported tool unders
 |---|---|---|
 | **Claude Code** | `.claude/commands/coograph-init.md` (native slash) | yes |
 | **VS Code Copilot** | `.github/skills/coograph-init/SKILL.md` (skill folder = slash name) | yes |
-| **Codex CLI** | `.codex/prompts/coograph-init.md` (project prompts dir) | yes |
-| **OpenCode** | `.opencode/command/coograph-init.md` (custom command) | yes |
+| **Codex CLI** | `.agents/skills/coograph-init/SKILL.md` (Codex skills, scanned from repo root) | yes |
+| **OpenCode** | `.opencode/commands/coograph-init.md` (custom command, plural dir) | yes |
 | **Cursor** | `.cursor/rules/coograph.mdc` § Invocation | no — type the string, agent follows the rule |
 | **Windsurf** | `.windsurfrules` § Invocation | no — type the string, agent follows the rule |
 | **Aider** | `CONVENTIONS.md` § Invocation | no — type the string, agent follows the convention |
