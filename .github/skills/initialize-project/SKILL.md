@@ -363,6 +363,76 @@ Register the target project so future `git pull` updates in coograph auto-propag
    ```
    After setup, every `git pull` in coograph will automatically sync updated agents, skills, commands, code-graph files, and `.mcp.json` to all registered projects — and rebuild their graphs if `code_graph: true`.
 
+## Step 9: Code-graph health check (only if code-graph enabled)
+
+Run this step only if the user selected `yes` in Step 1 question 5. Skip if `.code-graph/graph.db` does not exist (the build in Step 6f failed earlier — surface that instead).
+
+### 9a. Sanity-check the graph
+
+Run these queries against the target project's `.code-graph/graph.db` and collect the results:
+
+```bash
+sqlite3 .code-graph/graph.db "SELECT COUNT(*) FROM nodes;"
+sqlite3 .code-graph/graph.db "SELECT COUNT(*) FROM edges;"
+sqlite3 .code-graph/graph.db "SELECT COUNT(DISTINCT file_path) FROM nodes;"
+sqlite3 .code-graph/graph.db "SELECT kind, COUNT(*) FROM nodes GROUP BY kind ORDER BY COUNT(*) DESC LIMIT 5;"
+```
+
+Compare to expectations based on the source tree (Step 2 detection):
+
+- **Source files on disk** (count: `find src/ -type f -name '*.<ext>' | wc -l` or equivalent for the detected language)
+- **Distinct file_path nodes in graph** (from query above)
+
+### 9b. Detect issues
+
+Flag the graph as suspect if ANY of these are true:
+
+- `nodes` count is 0 or "unrealistically low" (< 50% of source files for projects with 20+ files)
+- `edges` count is 0 (parser produced symbols but no relationships — likely a parser fallback issue)
+- Distinct `file_path` count is < 80% of detected source files (parser silently skipped files)
+- Top `kind` values are missing expected categories for the language (e.g. Python project with zero `function` or `class` nodes)
+- `graph.db` size is < 10kb (likely empty schema, no real content)
+
+### 9c. Report and offer to fix
+
+If the graph looks healthy, output a one-line summary:
+
+```
+[code-graph] healthy — N nodes, M edges, K files indexed.
+```
+
+If the graph looks suspect, output a structured report:
+
+```
+[code-graph] possible issues:
+  - <issue 1, e.g. "only 12 of 47 source files indexed (26%)">
+  - <issue 2, e.g. "0 edges — relationships may be missing">
+
+The graph may not be returning useful results. Want me to try fixing it?
+  (a) Yes — rebuild from scratch and try alternate parsers where available
+  (b) No — leave as-is, I'll investigate manually
+```
+
+Wait for the user's choice. Do not auto-fix.
+
+### 9d. If user chose (a) — fix attempt
+
+1. Delete `.code-graph/graph.db` and any stale parser caches.
+2. Rebuild with verbose output:
+   ```bash
+   uv run --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py --build --verbose
+   ```
+3. Capture parser warnings/errors into a summary.
+4. Re-run the sanity queries from 9a.
+5. If the graph still looks suspect, hand off to the user with the verbose log:
+   ```
+   [code-graph] rebuild did not resolve all issues. See log above.
+   Likely causes: tree-sitter language pack missing, source files using a dialect/version
+   not supported by the fallback parsers, or symlinks/large generated files inflating counts.
+   Open an issue at github.com/paullukic/coograph if you want help.
+   ```
+6. If healthy, output the success line from 9c and continue.
+
 ## Guardrails
 
 - Never guess at commands — if you can't detect them, ask.
@@ -371,4 +441,4 @@ Register the target project so future `git pull` updates in coograph auto-propag
 - Keep the communication style, implementation workflow, and review role sections intact — those are template features.
 - Prefer what the project already does over generic defaults.
 - Initialization is complete only when there are zero `_TBD_` and `<!-- FILL` markers in copied instruction files.
-- If code-graph setup is enabled, initialization is complete only when `.code-graph/graph.db` exists in the target project and at least one MCP config file has been written.
+- If code-graph setup is enabled, initialization is complete only when `.code-graph/graph.db` exists in the target project, at least one MCP config file has been written, AND Step 9 health check has run (either reporting healthy or finishing the user-chosen fix path).
