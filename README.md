@@ -20,7 +20,7 @@ Ships a structured workflow, specialized agents with anti-hallucination guardrai
 
 | Tool | Command |
 |------|---------|
-| Claude Code | `/project:initialize` |
+| Claude Code | `/coograph:init` |
 | VS Code Copilot | Invoke the `initialize-project` skill |
 
 The initializer detects your stack, fills all `_TBD_` placeholders, and optionally sets up the code-graph. About 2 minutes.
@@ -125,7 +125,7 @@ Full reference (install, MCP config, supported stacks, tool list): [.github/code
 
 Template updates propagate to every registered project automatically.
 
-1. `/project:initialize` writes your project to `projects.json`.
+1. `/coograph:init` writes your project to `projects.json`.
 2. Install the hook once in the coograph repo:
    ```bash
    cp .github/hooks/post-merge .git/hooks/post-merge
