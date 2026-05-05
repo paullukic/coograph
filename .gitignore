@@ -33,6 +33,9 @@ Thumbs.db
 # Per-tool template files (templates/ ships native config for each AI tool)
 !templates/
 !templates/**
+# Project-level docs (screenshots, diagrams)
+!docs/
+!docs/**
 
 # Per-project bash audit log (written by .claude/hooks/log-bash.py)
 .claude/session.log

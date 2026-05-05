@@ -131,7 +131,19 @@ flowchart LR
 - **Build once** — tree-sitter parsers for Java, TS, Python, Go, Rust, C#, Ruby, and more walk your source into `.code-graph/graph.db`.
 - **Auto-updated** — git hooks (`post-commit`, `post-merge`, `post-rewrite`) re-parse only files whose SHA-1 changed. Millisecond updates.
 - **Query first** — agents call `get_minimal_context()` before any file read, falling back to grep only on failure.
-- **Visualize** — `server.py --visualize` outputs an interactive `.code-graph/graph.html`.
+
+### Visualize
+
+The MCP server ships an interactive D3 force-directed view of your graph. Useful for sanity-checking a fresh build, spotting orphan modules, and showing teammates what the agent actually sees.
+
+```bash
+uv run --with-requirements .github/code-graph/requirements.txt \
+  .github/code-graph/server.py --visualize
+```
+
+Outputs `.code-graph/graph.html` — a standalone HTML file (no server needed). Open in any browser. Drag nodes, hover for symbol details, filter by language or kind.
+
+![Coograph code-graph visualization — interactive D3 force-directed view of nodes and edges](docs/visualize.png)
 
 Full reference (install, MCP config, supported stacks, tool list): [.github/code-graph/README.md](.github/code-graph/README.md).
 
