@@ -1,0 +1,309 @@
+/* ================================================================
+   Code Graph — styles
+   Standalone CSS inlined into the generated HTML.
+   ================================================================ */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0f1117; color: #ddd; overflow: hidden;
+}
+
+/* ----------------------------------------------------------------
+   Side panel
+   ---------------------------------------------------------------- */
+#panel {
+  position: fixed; top: 0; left: 0; bottom: 0;
+  width: 340px; z-index: 10;
+  background: #13151f; border-right: 1px solid #1e2130;
+  display: flex; flex-direction: column;
+  font-size: 12px;
+}
+#panel-resize {
+  position: absolute; top: 0; right: -3px; bottom: 0; width: 6px;
+  cursor: col-resize; z-index: 20;
+}
+#panel-resize:hover, #panel-resize.active { background: #4a7fa5; }
+
+#panel-header {
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid #1e2130;
+  flex-shrink: 0;
+}
+
+#breadcrumb {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 10px;
+}
+
+#back-btn {
+  display: none; background: #1e2130; border: 1px solid #2a2d3e;
+  color: #aaa; padding: 3px 8px; border-radius: 4px;
+  cursor: pointer; font-size: 11px; white-space: nowrap;
+}
+#back-btn:hover { background: #2a2d3e; color: #fff; }
+
+#crumb-text {
+  font-size: 12px; font-weight: 600; color: #e0e0e0;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+#search {
+  width: 100%; padding: 5px 9px;
+  border: 1px solid #1e2130; border-radius: 4px;
+  background: #0f1117; color: #ddd; font-size: 12px; outline: none;
+}
+#search:focus { border-color: #4a7fa5; }
+
+/* ----------------------------------------------------------------
+   Scrollable body
+   ---------------------------------------------------------------- */
+#panel-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+
+/* ----------------------------------------------------------------
+   Section titles
+   ---------------------------------------------------------------- */
+.sec-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+  color: #556; margin: 12px 0 6px; user-select: none;
+}
+.sec-title:first-child { margin-top: 0; }
+
+/* ----------------------------------------------------------------
+   Filters
+   ---------------------------------------------------------------- */
+.filter-row {
+  display: flex; align-items: center; gap: 7px;
+  margin: 4px 0; cursor: pointer; user-select: none;
+}
+.filter-row input[type=checkbox] { cursor: pointer; accent-color: #4a7fa5; }
+
+.swatch {
+  display: inline-block; width: 22px; height: 3px;
+  border-radius: 2px; flex-shrink: 0;
+}
+.dot-swatch {
+  display: inline-block; width: 10px; height: 10px;
+  border-radius: 50%; flex-shrink: 0;
+}
+
+.filter-label { color: #aaa; }
+.filter-count { color: #445; font-size: 10px; margin-left: auto; }
+
+/* Extension pills */
+#ext-filters { display: none; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+
+.ext-pill {
+  padding: 2px 8px; border-radius: 10px; font-size: 10px;
+  background: #1e2130; color: #aaa; border: 1px solid #2a2d3e;
+  cursor: pointer; user-select: none; transition: all 0.15s;
+}
+.ext-pill.active { background: #2a3a4e; color: #fff; border-color: #4a7fa5; }
+.ext-pill:hover { border-color: #4a7fa5; }
+
+/* Show-all toggle */
+#show-all-row {
+  display: none;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid #1e2130;
+}
+#show-all-row .filter-row { color: #aaa; }
+
+/* ----------------------------------------------------------------
+   Connection list (ASCII-art text edges)
+   ---------------------------------------------------------------- */
+#conn-list { display: none; }
+
+.conn-item {
+  display: flex; align-items: baseline; gap: 0;
+  padding: 2px 0; font-size: 11px; line-height: 1.5;
+  cursor: pointer; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.conn-item:hover { background: #1a1d2a; }
+.conn-item:hover .conn-target { color: #fff; }
+
+.conn-arrow {
+  flex-shrink: 0; font-family: monospace; font-size: 10px;
+  white-space: pre;
+}
+.conn-arrow.out  { color: #556; }
+.conn-arrow.in   { color: #556; }
+
+.conn-count {
+  flex-shrink: 0; min-width: 24px; text-align: right;
+  font-family: monospace; font-size: 10px; margin-right: 2px;
+}
+.conn-count.depends_on  { color: #c8851a; }
+.conn-count.tests_for   { color: #2a9d5c; }
+.conn-count.inherits    { color: #e74c3c; }
+.conn-count.implements  { color: #1abc9c; }
+
+.conn-kind {
+  flex-shrink: 0; font-size: 9px; padding: 0 3px;
+  border-radius: 3px; margin: 0 3px;
+}
+.conn-kind.depends_on  { color: #c8851a; }
+.conn-kind.tests_for   { color: #2a9d5c; }
+.conn-kind.inherits    { color: #e74c3c; }
+.conn-kind.implements  { color: #1abc9c; }
+
+.conn-target {
+  color: #8899aa; overflow: hidden; text-overflow: ellipsis;
+}
+
+.conn-section-title {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: #445; margin: 8px 0 3px; padding-top: 4px;
+  border-top: 1px solid #1a1d2a;
+}
+.conn-section-title:first-child { border-top: none; margin-top: 0; }
+
+/* ----------------------------------------------------------------
+   Node info
+   ---------------------------------------------------------------- */
+#node-info { display: none; }
+#ni-name { font-weight: 600; color: #fff; word-break: break-all; margin-bottom: 3px; }
+#ni-path {
+  color: #556; font-size: 10px; word-break: break-all;
+  margin-bottom: 8px; line-height: 1.4;
+}
+
+/* ----------------------------------------------------------------
+   Symbol list
+   ---------------------------------------------------------------- */
+#symbol-list { display: none; }
+
+.sym-item {
+  padding: 3px 0; font-size: 11px; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sym-item:hover { color: #fff; }
+
+.sym-kind {
+  font-size: 9px; padding: 1px 4px; border-radius: 3px;
+  margin-right: 4px; color: #fff;
+}
+.sym-kind.class      { background: #2980b9; }
+.sym-kind.interface  { background: #8e44ad; }
+.sym-kind.enum       { background: #27ae60; }
+.sym-kind.function   { background: #e67e22; }
+.sym-kind.method     { background: #d35400; }
+.sym-kind.annotation { background: #c0392b; }
+.sym-kind.table      { background: #16a085; }
+.sym-kind.endpoint   { background: #2c3e50; }
+
+/* ----------------------------------------------------------------
+   Stats bar
+   ---------------------------------------------------------------- */
+#stats {
+  position: fixed; bottom: 10px; left: 350px; z-index: 10;
+  background: rgba(13,15,23,0.9); padding: 5px 10px;
+  border-radius: 4px; font-size: 11px; color: #556;
+  border: 1px solid #1e2130;
+}
+
+/* ----------------------------------------------------------------
+   Tooltip
+   ---------------------------------------------------------------- */
+#tooltip {
+  position: fixed; display: none; pointer-events: none;
+  background: rgba(10,12,20,0.97); border: 1px solid #2a2d3e;
+  border-radius: 5px; padding: 7px 11px; font-size: 11px;
+  max-width: 360px; z-index: 40;
+}
+#tt-title { font-weight: 600; color: #fff; }
+#tt-sub   { color: #556; margin-top: 2px; word-break: break-all; }
+#tt-extra { color: #4a7fa5; margin-top: 3px; font-size: 10px; }
+
+/* ----------------------------------------------------------------
+   Help hint
+   ---------------------------------------------------------------- */
+#help-hint {
+  position: fixed; top: 10px; right: 10px; z-index: 10;
+  background: rgba(13,15,23,0.9); padding: 8px 12px;
+  border-radius: 4px; font-size: 11px; color: #445;
+  border: 1px solid #1e2130; max-width: 220px;
+  line-height: 1.5;
+}
+#help-hint b { color: #667; }
+
+/* ----------------------------------------------------------------
+   Node list
+   ---------------------------------------------------------------- */
+#node-list-section { display: none !important; }
+#node-list-section.visible { display: block !important; }
+#node-list-section .sec-title {
+  display: flex; align-items: center; justify-content: space-between;
+}
+#node-list-count { font-size: 10px; color: #445; font-weight: normal; text-transform: none; letter-spacing: 0; }
+
+#node-list {
+  max-height: 40vh; overflow-y: auto; margin-bottom: 8px;
+}
+
+.nl-item {
+  padding: 4px 6px; cursor: pointer; border-radius: 3px;
+  overflow: hidden; transition: background 0.1s;
+}
+.nl-item:hover { background: #1a1d2a; }
+.nl-item.active { background: #1e2a3e; }
+
+.nl-name {
+  font-size: 11px; color: #ddd; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.nl-path {
+  font-size: 9px; color: #445; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; margin-top: 1px;
+}
+
+.nl-dot {
+  display: inline-block; width: 7px; height: 7px;
+  border-radius: 50%; margin-right: 5px; flex-shrink: 0;
+  vertical-align: middle;
+}
+
+/* Folder tree */
+.nl-folder { margin-bottom: 1px; }
+
+.nl-folder-header {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 4px; cursor: pointer; border-radius: 3px;
+  user-select: none; font-size: 11px;
+}
+.nl-folder-header:hover { background: #1a1d2a; }
+
+.nl-chevron {
+  flex-shrink: 0; width: 14px; text-align: center;
+  font-size: 9px; color: #556; transition: transform 0.15s;
+}
+.nl-chevron::before { content: "\25B6"; }
+.nl-chevron.open { transform: rotate(90deg); }
+
+.nl-folder-name {
+  color: #8899aa; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-weight: 500;
+}
+
+.nl-folder-count {
+  margin-left: auto; flex-shrink: 0;
+  font-size: 9px; color: #334; min-width: 16px; text-align: right;
+}
+
+.nl-folder-contents {
+  padding-left: 14px;
+}
+
+.nl-folder-contents .nl-item {
+  padding: 2px 6px;
+}
+
+canvas#graph { display: block; margin-left: 340px; }
+
+.tree-btn { background:#1e2130;border:1px solid #2a2d3e;color:#aaa;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:10px; }
+.tree-btn:hover { background:#2a2d3e;color:#fff; }
+.folder-cb { cursor:pointer;accent-color:#4a7fa5;flex-shrink:0; }
+
+/* Nested tree: child folders inside contents get subtle left border */
+.nl-folder-contents > .nl-folder { border-left: 1px solid #1e2130; margin-left: 8px; padding-left: 4px !important; }
+.nl-folder-contents > .nl-folder > .nl-folder-header { padding-left: 0; }

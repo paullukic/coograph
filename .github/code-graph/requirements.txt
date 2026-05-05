@@ -1,0 +1,15 @@
+mcp>=1.0.0
+
+# Tree-sitter: accurate AST parsing (replaces regex parsers where installed)
+# Install the languages you need — uninstalled ones fall back to regex parsers
+tree-sitter>=0.22
+tree-sitter-python
+tree-sitter-javascript
+tree-sitter-typescript
+tree-sitter-java
+tree-sitter-go
+tree-sitter-rust
+tree-sitter-ruby
+tree-sitter-c-sharp
+tree-sitter-php
+tree-sitter-kotlin

@@ -15,9 +15,14 @@ Thumbs.db
 .env
 .env.local
 
-# Override global gitignore — include Claude Code files in this repo
+# Override global gitignore — include project files in this repo
 !.claude/
 !CLAUDE.md
+!.github/
+!.github/code-graph/
+!AGENTS.md
+!.mcp.json
+!openspec/
 
 # Per-project bash audit log (written by .claude/hooks/log-bash.py)
 .claude/session.log

@@ -1,0 +1,17 @@
+#!/bin/sh
+# Auto-sync copilot-template updates to all registered projects after git pull.
+#
+# Install once (in the copilot-template repo):
+#   cp .github/hooks/post-merge .git/hooks/post-merge
+#   chmod +x .git/hooks/post-merge
+#
+# This hook runs sync.py which reads projects.json and propagates template
+# file updates + rebuilds code-graphs for all registered projects.
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT" || exit 0
+
+[ -f "projects.json" ] || exit 0   # nothing registered — skip silently
+
+echo "[copilot-template] Syncing updates to registered projects..."
+python3 .github/sync.py 2>&1 | tee -a .github/sync.log || true
