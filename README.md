@@ -116,12 +116,16 @@ A standalone Python MCP server that parses your codebase into a SQLite dependenc
 ```mermaid
 flowchart LR
     subgraph WITHOUT ["Without code-graph"]
-        A1["grep 'OrderService'"] --> A2["87 matches,\n30+ files"] --> A3["Read each\nfor context"] --> A4["~50K tokens\n20+ tool calls"]
+        direction TB
+        A1["grep 'OrderService'"] --> A2["87 matches,<br/>30+ files"] --> A3["Read each<br/>for context"] --> A4["~50K tokens<br/>20+ tool calls"]
     end
 
     subgraph WITH ["With code-graph"]
-        B1["get_minimal_context(\n'add caching')"] --> B2["query_graph(\n'callers_of', X)"] --> B3["Read 4\nreturned files"] --> B4["~2K tokens\n3 tool calls"]
+        direction TB
+        B1["get_minimal_context(<br/>'add caching')"] --> B2["query_graph(<br/>'callers_of', X)"] --> B3["Read 4<br/>returned files"] --> B4["~2K tokens<br/>3 tool calls"]
     end
+
+    WITHOUT ~~~ WITH
 ```
 
 - **Build once** — tree-sitter parsers for Java, TS, Python, Go, Rust, C#, Ruby, and more walk your source into `.code-graph/graph.db`.
