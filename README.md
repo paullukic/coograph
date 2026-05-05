@@ -1,8 +1,10 @@
 # Coograph
 
-Reusable AI coding assistant configuration for any project. Works with **Claude Code**, **VS Code Copilot**, **Cursor**, and **Windsurf**.
+Reusable AI coding assistant configuration for any project. Works with **Claude Code**, **VS Code Copilot**, **Codex CLI**, **OpenCode**, **Cursor**, **Windsurf**, **Aider**, and **Cline** — eight tools, one unified workflow.
 
 Ships a structured workflow, specialized agents with anti-hallucination guardrails, Claude Code lifecycle hooks, and an optional code-graph MCP server that replaces brute-force file searching with targeted SQLite queries.
+
+**Links:** [coograph.com](https://coograph.com) · [docs](https://coograph.com/docs/) · [getting started](https://coograph.com/docs/getting-started/) · [code graph](https://coograph.com/docs/code-graph/) · [workflow](https://coograph.com/docs/workflow/) · [roadmap](https://coograph.com/roadmap/) · [pro](https://coograph.com/pro/)
 
 ## Contents
 

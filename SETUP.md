@@ -2,6 +2,8 @@
 
 If you prefer not to use the automated initializer, follow these steps.
 
+**Quick links:** [coograph.com](https://coograph.com) · [docs](https://coograph.com/docs/) · [code graph](https://coograph.com/docs/code-graph/) · [roadmap](https://coograph.com/roadmap/)
+
 ## 1. Copy files
 
 ```bash
