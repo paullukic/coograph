@@ -130,14 +130,8 @@ Each hook runs `uv run --with-requirements .github/code-graph/requirements.txt .
 
 The graph database is generated — never commit it.
 
-## 4. User-level communication style (VS Code, optional)
+## 4. Communication style
 
-```bash
-# macOS / Linux
-cp user/brutal-honesty.instructions.md ~/.config/Code/User/prompts/
+`.github/instructions/brutal-honesty.instructions.md` ships with the template. VS Code Copilot loads it automatically (`applyTo: "**"` matches every file). Claude Code reads it via the directive in `CLAUDE.md` § Communication Style at session start.
 
-# Windows (PowerShell)
-Copy-Item user/brutal-honesty.instructions.md "$env:APPDATA/Code/User/prompts/"
-```
-
-Sets a global direct/evidence-based communication style across all workspaces. VS Code Settings Sync does not sync the `prompts/` folder — re-copy on each machine.
+No manual copy required.

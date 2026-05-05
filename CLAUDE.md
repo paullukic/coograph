@@ -27,7 +27,7 @@ Domain-specific instructions (testing, styling) are in `.github/instructions/` a
 
 ## Communication Style
 
-Follow the communication style defined in `.github/copilot-instructions.md` — direct, evidence-based, concise. No filler, no praise padding, no softening.
+Read `.github/instructions/brutal-honesty.instructions.md` at session start and apply throughout. Direct, evidence-based, concise. No filler, no praise padding, no softening. See also `.github/copilot-instructions.md`.
 
 ## Quick Reference
 
