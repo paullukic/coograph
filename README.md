@@ -18,20 +18,20 @@ Ships a structured workflow, specialized agents with anti-hallucination guardrai
 
 ## Quick Start
 
-Type **`/coograph-init`** in your AI tool's chat — every supported tool understands the same command.
+Trigger the initializer in your AI tool's chat. Each tool has its own invocation syntax — there is **no single command that works everywhere**, because each tool registers custom workflows differently. Coograph ships native config for all eight.
 
-| Tool | How `/coograph-init` is wired | Autocomplete? |
+| Tool | Invoke with | Wired via |
 |---|---|---|
-| **Claude Code** | `.claude/commands/coograph-init.md` (native slash) | yes |
-| **VS Code Copilot** | `.github/skills/coograph-init/SKILL.md` (skill folder = slash name) | yes |
-| **Codex CLI** | `.agents/skills/coograph-init/SKILL.md` (Codex skills, scanned from repo root) | yes |
-| **OpenCode** | `.opencode/commands/coograph-init.md` (custom command, plural dir) | yes |
-| **Cursor** | `.cursor/rules/coograph.mdc` § Invocation | no — type the string, agent follows the rule |
-| **Windsurf** | `.windsurfrules` § Invocation | no — type the string, agent follows the rule |
-| **Aider** | `CONVENTIONS.md` § Invocation | no — type the string, agent follows the convention |
-| **Cline** | `.clinerules` § Invocation | no — type the string, agent follows the rule |
+| **Claude Code** | `/coograph-init` | `.claude/commands/coograph-init.md` |
+| **VS Code Copilot** | `/coograph-init` | `.github/skills/coograph-init/` skill folder |
+| **Codex CLI** | `$coograph-init` (explicit skill) **or** "initialize the project" (auto-trigger) | `.agents/skills/coograph-init/SKILL.md` (Codex scans repo root). Codex reserves `/` for built-ins, so custom workflows use `$name` |
+| **OpenCode** | `/coograph-init` | `.opencode/commands/coograph-init.md` |
+| **Cursor** | `/coograph-init` (string match — no autocomplete) | `.cursor/rules/coograph.mdc` § Invocation |
+| **Windsurf** | `/coograph-init` (string match) | `.windsurfrules` § Invocation |
+| **Aider** | `/coograph-init` (string match) | `CONVENTIONS.md` § Invocation |
+| **Cline** | `/coograph-init` (string match) | `.clinerules` § Invocation |
 
-For the four "no autocomplete" tools, just type `/coograph-init` (or paraphrase: "initialize the project", "set up coograph"). Each tool's config file tells the agent to follow `.github/skills/coograph-init/SKILL.md`.
+Natural-language paraphrases ("initialize the project", "set up coograph", "wire up coograph in this repo") work in **every** tool — each config file lists those triggers alongside the slash form, and Codex CLI's skill auto-activates from the description match.
 
 The initializer prompts which tools to set up (multi-select), detects your stack, fills all `_TBD_` placeholders, and optionally sets up the code-graph. About 2 minutes.
 

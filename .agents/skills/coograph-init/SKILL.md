@@ -1,6 +1,6 @@
 ---
 name: coograph-init
-description: Initialize a new project with the Coograph template — auto-detect tech stack, fill all `_TBD_` placeholders, optionally set up the code-graph. Trigger when user types `/coograph-init`, asks to "initialize the project", "set up coograph", or wants Coograph wired up in a fresh repo.
+description: Initialize a new project with the Coograph template — auto-detect tech stack, fill all `_TBD_` placeholders, optionally set up the code-graph. Trigger when the user types `/coograph-init` or `$coograph-init`, asks to "initialize the project", "set up coograph", "wire up coograph", "add coograph to this repo", or otherwise wants the Coograph configuration installed in a fresh repository.
 ---
 
 # /coograph-init (Codex CLI)

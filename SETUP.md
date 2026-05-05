@@ -136,21 +136,23 @@ The graph database is generated — never commit it.
 
 No manual copy required.
 
-## 5. `/coograph-init` invocation per tool
+## 5. Invocation per tool
 
-Every supported tool understands the same `/coograph-init` command, but the registration mechanism differs.
+There is no single command that works everywhere — each tool registers custom workflows differently. Coograph ships native config for all eight.
 
-| Tool | Config file (copy to your project) | Autocomplete? |
+| Tool | Invoke with | Config file (copy to your project) |
 |---|---|---|
-| **Claude Code** | `.claude/commands/coograph-init.md` | yes — appears in `/` menu |
-| **VS Code Copilot** | `.github/skills/coograph-init/SKILL.md` | yes — folder name = slash command |
-| **Codex CLI** | `.agents/skills/coograph-init/SKILL.md` | yes — Codex scans `.agents/skills/` from repo root |
-| **OpenCode** | `.opencode/commands/coograph-init.md` | yes — custom command (plural `commands/` dir) |
-| **Cursor** | `.cursor/rules/coograph.mdc` § Invocation | no — type the string, rule fires |
-| **Windsurf** | `.windsurfrules` § Invocation | no — type the string, rule fires |
-| **Aider** | `CONVENTIONS.md` § Invocation | no — type the string, convention fires |
-| **Cline** | `.clinerules` § Invocation | no — type the string, rule fires |
+| **Claude Code** | `/coograph-init` | `.claude/commands/coograph-init.md` |
+| **VS Code Copilot** | `/coograph-init` | `.github/skills/coograph-init/SKILL.md` |
+| **Codex CLI** | `$coograph-init` **or** "initialize the project" | `.agents/skills/coograph-init/SKILL.md` |
+| **OpenCode** | `/coograph-init` | `.opencode/commands/coograph-init.md` |
+| **Cursor** | `/coograph-init` (string match — no menu) | `.cursor/rules/coograph.mdc` § Invocation |
+| **Windsurf** | `/coograph-init` (string match) | `.windsurfrules` § Invocation |
+| **Aider** | `/coograph-init` (string match) | `CONVENTIONS.md` § Invocation |
+| **Cline** | `/coograph-init` (string match) | `.clinerules` § Invocation |
 
-For the four "no autocomplete" tools, just type `/coograph-init` literally in chat. The agent reads its config file, sees the `## Invocation` directive, and runs `.github/skills/coograph-init/SKILL.md`. Paraphrases work too: "initialize the project", "set up coograph", "wire up coograph in this repo".
+**Codex CLI quirk:** Codex reserves `/` for ~30 built-in commands (`/model`, `/permissions`, `/diff`, etc.) — there is no project-level custom slash registration. Custom skills are invoked with `$skill-name` (explicit) or auto-trigger when the user's request matches the skill's description. Verify the skill loaded with `/skills`.
+
+**Cursor / Windsurf / Aider / Cline** have no native slash registration either, but the agent in those tools reads the loaded rules/conventions file on every turn — so when the user types `/coograph-init` literally, the rule fires and the agent runs `.github/skills/coograph-init/SKILL.md`. Natural-language paraphrases ("initialize the project", "set up coograph") work the same way in every tool.
 
 For Cursor/Windsurf/Aider/Cline you must copy the matching config file from `templates/<tool>/` into your project root before the rule will fire.

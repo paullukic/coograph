@@ -10,7 +10,9 @@
 
 ## Invocation
 
-If the user types `/coograph-init` (or asks to "initialize the project", "set up coograph", etc.), follow `.github/skills/coograph-init/SKILL.md` exactly. That single procedure is the source of truth across every tool.
+If the user types `/coograph-init`, `$coograph-init`, or asks to "initialize the project" / "set up coograph" / "wire up coograph in this repo", follow `.github/skills/coograph-init/SKILL.md` exactly. That single procedure is the source of truth across every tool.
+
+Note for Codex CLI: `/` is reserved for built-in commands. The Codex skill at `.agents/skills/coograph-init/SKILL.md` auto-triggers from description match, or invoke explicitly with `$coograph-init`.
 
 ## Conventions
 
