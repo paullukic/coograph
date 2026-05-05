@@ -8,6 +8,10 @@ alwaysApply: true
 
 This project ships with the Coograph AI coding template.
 
+## Invocation
+
+If the user types `/coograph:init` (or asks to "initialize the project", "set up coograph"), follow `.github/skills/initialize-project/SKILL.md` exactly.
+
 ## On every session start
 
 1. **Read `.github/copilot-instructions.md`** — full project conventions, code style, data layer patterns.

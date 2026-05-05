@@ -8,6 +8,12 @@
   Full conventions: .github/copilot-instructions.md
 -->
 
+## Invocation
+
+If the user types `/coograph:init` (or asks to "initialize the project", "set up coograph", etc.), follow `.github/skills/initialize-project/SKILL.md` exactly. That single procedure is the source of truth across every tool.
+
+## Conventions
+
 When working on this codebase:
 
 - **Rules**: Follow `.github/copilot-instructions.md`.

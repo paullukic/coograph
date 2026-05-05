@@ -2,6 +2,10 @@
 
 This project ships with the Coograph AI coding template. Aider should follow these rules.
 
+## Invocation
+
+If the user types `/coograph:init` (or asks to "initialize the project", "set up coograph"), follow `.github/skills/initialize-project/SKILL.md` exactly.
+
 ## On session start
 
 1. Read `.github/copilot-instructions.md` for full project conventions.
