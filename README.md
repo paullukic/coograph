@@ -18,7 +18,7 @@ Ships a structured workflow, specialized agents with anti-hallucination guardrai
 
 ## Quick Start
 
-Type **`/coograph:init`** in your AI tool's chat. Works in all 8 supported tools:
+Type **`/coograph-init`** in your AI tool's chat. Works in all 8 supported tools:
 
 - **Claude Code** — native slash command
 - **VS Code Copilot** — agent recognizes the string from `AGENTS.md` directive
@@ -127,7 +127,7 @@ Full reference (install, MCP config, supported stacks, tool list): [.github/code
 
 Template updates propagate to every registered project automatically.
 
-1. `/coograph:init` writes your project to `projects.json`.
+1. `/coograph-init` writes your project to `projects.json`.
 2. Install the hook once in the coograph repo:
    ```bash
    cp .github/hooks/post-merge .git/hooks/post-merge

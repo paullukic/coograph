@@ -4,7 +4,7 @@ This project ships with the Coograph AI coding template. Aider should follow the
 
 ## Invocation
 
-If the user types `/coograph:init` (or asks to "initialize the project", "set up coograph"), follow `.github/skills/initialize-project/SKILL.md` exactly.
+If the user types `/coograph-init` (or asks to "initialize the project", "set up coograph"), follow `.github/skills/coograph-init/SKILL.md` exactly.
 
 ## On session start
 

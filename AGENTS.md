@@ -10,7 +10,7 @@
 
 ## Invocation
 
-If the user types `/coograph:init` (or asks to "initialize the project", "set up coograph", etc.), follow `.github/skills/initialize-project/SKILL.md` exactly. That single procedure is the source of truth across every tool.
+If the user types `/coograph-init` (or asks to "initialize the project", "set up coograph", etc.), follow `.github/skills/coograph-init/SKILL.md` exactly. That single procedure is the source of truth across every tool.
 
 ## Conventions
 

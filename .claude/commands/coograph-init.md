@@ -1,6 +1,6 @@
 Initialize a new project with this Coograph template. Interactive setup that auto-detects the tech stack and fills all placeholders.
 
-The full procedure is in `.github/skills/initialize-project/SKILL.md`. Follow those steps exactly, with these Claude Code-specific substitutions:
+The full procedure is in `.github/skills/coograph-init/SKILL.md`. Follow those steps exactly, with these Claude Code-specific substitutions:
 
 | SKILL.md tool | Claude Code equivalent |
 |---------------|----------------------|

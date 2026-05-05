@@ -1,5 +1,5 @@
 ---
-name: initialize-project
+name: coograph-init
 description: Initialize a new project with the Coograph template. Interactive setup that auto-detects the tech stack and fills in all template placeholders.
 argument-hint: Target project path (optional — will ask if not provided).
 license: MIT
@@ -89,7 +89,7 @@ Copy files from the coograph repo to the target project. Only copy what's releva
 
 **For VS Code Copilot, Codex CLI, AND OpenCode** (all auto-read `AGENTS.md`):
 - `.github/agents/` (all agent `.md` files — used by VS Code Copilot Chat)
-- `.github/skills/` (all skill directories including `initialize-project/` — the target project can use it to initialize other projects later)
+- `.github/skills/` (all skill directories including `coograph-init/` — the target project can use it to initialize other projects later)
 - `AGENTS.md`
 
 **For Cursor:**

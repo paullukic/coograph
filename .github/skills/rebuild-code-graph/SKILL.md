@@ -30,7 +30,7 @@ find . -path "*/code-graph/server.py" -not -path "*/node_modules/*" 2>/dev/null 
 ```
 
 If **not found**: stop and tell the user:
-> "No code-graph tooling found. Run the `initialize-project` skill to set it up, or copy `.github/code-graph/` from the coograph."
+> "No code-graph tooling found. Run the `coograph-init` skill to set it up, or copy `.github/code-graph/` from the coograph."
 
 If **multiple found**: use the one closest to the current working directory (shortest path). Report which one you're using.
 
