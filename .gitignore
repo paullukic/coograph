@@ -1,0 +1,39 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+**/__pycache__/
+
+# Environment
+.env
+.env.local
+
+# Override global gitignore — include Claude Code files in this repo
+!.claude/
+!CLAUDE.md
+
+# Per-project bash audit log (written by .claude/hooks/log-bash.py)
+.claude/session.log
+# Local Claude Code overrides — never synced, never committed
+.claude/settings.local.json
+
+# Local AI tool state (machine-specific)
+.omc/
+
+# Generated artifacts (local only)
+.code-graph/
+**/node_modules/
+
+# Machine-specific project registry and sync log (each user has their own)
+projects.json
+.github/sync.log
+
+# OpenSpec change archives (optional — uncomment to ignore)
+# openspec/changes/archive/
