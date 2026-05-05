@@ -20,8 +20,8 @@ Ask the user these questions one at a time (wait for each answer before proceedi
 2. **Which AI tools should I set up for?** (multi-select — accept any combination)
    - **Claude Code** — `CLAUDE.md`, `.claude/commands/`, `.claude/hooks/`, `.claude/settings.json`
    - **VS Code Copilot** — `.github/agents/`, `.github/skills/`, `AGENTS.md`
-   - **Codex CLI** — `AGENTS.md` (auto-read; same file as VS Code Copilot)
-   - **OpenCode** (sst/opencode) — `AGENTS.md` (auto-read; same file)
+   - **Codex CLI** — `.codex/prompts/coograph-init.md` + `AGENTS.md` (native `/coograph-init` slash)
+   - **OpenCode** (sst/opencode) — `.opencode/command/coograph-init.md` + `AGENTS.md` (native `/coograph-init` slash)
    - **Cursor** — `.cursor/rules/coograph.mdc` (from `templates/cursor/`)
    - **Windsurf** — `.windsurfrules` (from `templates/windsurf/`)
    - **Aider** — `CONVENTIONS.md` (from `templates/aider/`)
@@ -82,29 +82,43 @@ Copy files from the coograph repo to the target project. Only copy what's releva
 **For Claude Code:**
 - `CLAUDE.md`
 - `.claude/commands/project/` (all command files)
-- `.claude/commands/coograph/init.md` (the init command itself, so the project can re-init others)
+- `.claude/commands/coograph-init.md` (the `/coograph-init` slash command itself, so the project can re-init others)
 - `.claude/hooks/` (all hook scripts — block-generated, log-bash, report-graph, warn-scope)
 - `.claude/settings.json` (wires the hooks into Claude Code lifecycle events)
 - Do NOT copy `.claude/settings.local.json` — that's per-machine personal overrides
 
-**For VS Code Copilot, Codex CLI, AND OpenCode** (all auto-read `AGENTS.md`):
+**For VS Code Copilot:**
 - `.github/agents/` (all agent `.md` files — used by VS Code Copilot Chat)
 - `.github/skills/` (all skill directories including `coograph-init/` — the target project can use it to initialize other projects later)
 - `AGENTS.md`
 
+**For Codex CLI:**
+- `.codex/prompts/coograph-init.md` (registers `/coograph-init` slash in Codex CLI)
+- `AGENTS.md` (auto-read by Codex CLI; same file as VS Code Copilot — copy once)
+- `.github/skills/coograph-init/` (the actual procedure the slash command points to)
+
+**For OpenCode:**
+- `.opencode/command/coograph-init.md` (registers `/coograph-init` slash in OpenCode)
+- `AGENTS.md` (auto-read by OpenCode; same file as VS Code Copilot — copy once)
+- `.github/skills/coograph-init/` (the actual procedure the slash command points to)
+
 **For Cursor:**
 - `templates/cursor/.cursor/` → target project's `.cursor/` (preserves rules subdirectory structure)
+- Cursor has no native slash registration; the `coograph.mdc` rule tells the agent to follow `.github/skills/coograph-init/SKILL.md` whenever the user types `/coograph-init`. Copy `.github/skills/coograph-init/` too.
 
 **For Windsurf:**
 - `templates/windsurf/.windsurfrules` → target project root `.windsurfrules`
+- Windsurf has no native slash registration; the rule fires when the user types `/coograph-init`. Copy `.github/skills/coograph-init/` too.
 
 **For Aider:**
 - `templates/aider/CONVENTIONS.md` → target project root `CONVENTIONS.md`
+- Aider has no native slash registration; the convention fires when the user types `/coograph-init`. Copy `.github/skills/coograph-init/` too.
 
 **For Cline:**
 - `templates/cline/.clinerules` → target project root `.clinerules`
+- Cline has no native slash registration; the rule fires when the user types `/coograph-init`. Copy `.github/skills/coograph-init/` too.
 
-**Multi-tool selections:** copy the union of all selected tool sections plus the always-copy section. Skip duplicate destinations (e.g. `AGENTS.md` is shared between VS Code Copilot and Codex CLI — copy once).
+**Multi-tool selections:** copy the union of all selected tool sections plus the always-copy section. Skip duplicate destinations (e.g. `AGENTS.md` is shared between VS Code Copilot, Codex CLI, and OpenCode — copy once; `.github/skills/coograph-init/` is needed by every tool except Claude Code — copy once).
 
 **Do NOT overwrite** existing files without asking. If a file exists, show both versions side by side (existing vs template) and ask the user how to proceed:
 - **Overwrite** — replace entirely with the template version

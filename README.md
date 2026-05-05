@@ -18,12 +18,20 @@ Ships a structured workflow, specialized agents with anti-hallucination guardrai
 
 ## Quick Start
 
-Type **`/coograph-init`** in your AI tool's chat. Works in all 8 supported tools:
+Type **`/coograph-init`** in your AI tool's chat — every supported tool understands the same command.
 
-- **Claude Code** — native slash command
-- **VS Code Copilot** — agent recognizes the string from `AGENTS.md` directive
-- **Codex CLI / OpenCode** — same (read `AGENTS.md`)
-- **Cursor / Windsurf / Aider / Cline** — same (each tool's native config file points to the skill)
+| Tool | How `/coograph-init` is wired | Autocomplete? |
+|---|---|---|
+| **Claude Code** | `.claude/commands/coograph-init.md` (native slash) | yes |
+| **VS Code Copilot** | `.github/skills/coograph-init/SKILL.md` (skill folder = slash name) | yes |
+| **Codex CLI** | `.codex/prompts/coograph-init.md` (project prompts dir) | yes |
+| **OpenCode** | `.opencode/command/coograph-init.md` (custom command) | yes |
+| **Cursor** | `.cursor/rules/coograph.mdc` § Invocation | no — type the string, agent follows the rule |
+| **Windsurf** | `.windsurfrules` § Invocation | no — type the string, agent follows the rule |
+| **Aider** | `CONVENTIONS.md` § Invocation | no — type the string, agent follows the convention |
+| **Cline** | `.clinerules` § Invocation | no — type the string, agent follows the rule |
+
+For the four "no autocomplete" tools, just type `/coograph-init` (or paraphrase: "initialize the project", "set up coograph"). Each tool's config file tells the agent to follow `.github/skills/coograph-init/SKILL.md`.
 
 The initializer prompts which tools to set up (multi-select), detects your stack, fills all `_TBD_` placeholders, and optionally sets up the code-graph. About 2 minutes.
 

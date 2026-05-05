@@ -135,3 +135,22 @@ The graph database is generated — never commit it.
 `.github/instructions/brutal-honesty.instructions.md` ships with the template. VS Code Copilot loads it automatically (`applyTo: "**"` matches every file). Claude Code reads it via the directive in `CLAUDE.md` § Communication Style at session start.
 
 No manual copy required.
+
+## 5. `/coograph-init` invocation per tool
+
+Every supported tool understands the same `/coograph-init` command, but the registration mechanism differs.
+
+| Tool | Config file (copy to your project) | Autocomplete? |
+|---|---|---|
+| **Claude Code** | `.claude/commands/coograph-init.md` | yes — appears in `/` menu |
+| **VS Code Copilot** | `.github/skills/coograph-init/SKILL.md` | yes — folder name = slash command |
+| **Codex CLI** | `.codex/prompts/coograph-init.md` | yes — file in project prompts dir |
+| **OpenCode** | `.opencode/command/coograph-init.md` | yes — custom command |
+| **Cursor** | `.cursor/rules/coograph.mdc` § Invocation | no — type the string, rule fires |
+| **Windsurf** | `.windsurfrules` § Invocation | no — type the string, rule fires |
+| **Aider** | `CONVENTIONS.md` § Invocation | no — type the string, convention fires |
+| **Cline** | `.clinerules` § Invocation | no — type the string, rule fires |
+
+For the four "no autocomplete" tools, just type `/coograph-init` literally in chat. The agent reads its config file, sees the `## Invocation` directive, and runs `.github/skills/coograph-init/SKILL.md`. Paraphrases work too: "initialize the project", "set up coograph", "wire up coograph in this repo".
+
+For Cursor/Windsurf/Aider/Cline you must copy the matching config file from `templates/<tool>/` into your project root before the rule will fire.
