@@ -21,6 +21,7 @@ Ask the user these questions one at a time (wait for each answer before proceedi
    - **Claude Code** — `CLAUDE.md`, `.claude/commands/`, `.claude/hooks/`, `.claude/settings.json`
    - **VS Code Copilot** — `.github/agents/`, `.github/skills/`, `AGENTS.md`
    - **Codex CLI** — `AGENTS.md` (auto-read; same file as VS Code Copilot)
+   - **OpenCode** (sst/opencode) — `AGENTS.md` (auto-read; same file)
    - **Cursor** — `.cursor/rules/coograph.mdc` (from `templates/cursor/`)
    - **Windsurf** — `.windsurfrules` (from `templates/windsurf/`)
    - **Aider** — `CONVENTIONS.md` (from `templates/aider/`)
@@ -86,7 +87,7 @@ Copy files from the coograph repo to the target project. Only copy what's releva
 - `.claude/settings.json` (wires the hooks into Claude Code lifecycle events)
 - Do NOT copy `.claude/settings.local.json` — that's per-machine personal overrides
 
-**For VS Code Copilot AND Codex CLI** (both read `AGENTS.md`):
+**For VS Code Copilot, Codex CLI, AND OpenCode** (all auto-read `AGENTS.md`):
 - `.github/agents/` (all agent `.md` files — used by VS Code Copilot Chat)
 - `.github/skills/` (all skill directories including `initialize-project/` — the target project can use it to initialize other projects later)
 - `AGENTS.md`

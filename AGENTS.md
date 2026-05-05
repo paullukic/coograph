@@ -2,7 +2,7 @@
 
 <!--
   Quick summary for AI agents that auto-read AGENTS.md
-  (VS Code Copilot, OpenAI Codex CLI, generic AGENTS.md-aware agents).
+  (VS Code Copilot, OpenAI Codex CLI, OpenCode, generic AGENTS.md-aware agents).
   Other tools have native config files: .cursor/rules/, .windsurfrules,
   CONVENTIONS.md (Aider), .clinerules. CLAUDE.md is loaded by Claude Code.
   Full conventions: .github/copilot-instructions.md
