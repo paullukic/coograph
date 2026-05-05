@@ -1,0 +1,19 @@
+{
+  "name": "Coograph",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" },
+    "ghcr.io/astral-sh/uv:0": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "GitHub.copilot",
+        "GitHub.copilot-chat",
+        "ms-python.python"
+      ]
+    }
+  },
+  "postCreateCommand": "cd .github/code-graph && npm install --silent || true",
+  "remoteUser": "vscode"
+}

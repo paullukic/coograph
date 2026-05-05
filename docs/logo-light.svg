@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 96" width="520" height="96" role="img" aria-label="Coograph">
+  <defs>
+    <style>
+      .t { font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, Consolas, monospace; font-weight: 500; fill: #1a1a1a; letter-spacing: -0.5px; }
+      .b { fill: #6b6b6b; }
+      .a { stroke: #d4501f; fill: #d4501f; }
+    </style>
+  </defs>
+  <text x="20" y="64" class="t" font-size="44">
+    <tspan class="b">&lt;</tspan><tspan>coo</tspan>
+  </text>
+  <line x1="172" y1="48" x2="220" y2="48" class="a" stroke-width="3"/>
+  <circle cx="172" cy="48" r="5" class="a"/>
+  <circle cx="220" cy="48" r="5" class="a"/>
+  <text x="232" y="64" class="t" font-size="44">
+    <tspan>graph</tspan><tspan class="b">/&gt;</tspan>
+  </text>
+  <text x="20" y="86" font-family="'JetBrains Mono', 'SF Mono', ui-monospace, monospace" font-size="11" font-weight="400" fill="#6b6b6b" letter-spacing="2">GRAPH-FIRST CONTEXT FOR AI CODING</text>
+</svg>

@@ -36,6 +36,9 @@ Thumbs.db
 # Project-level docs (screenshots, diagrams)
 !docs/
 !docs/**
+# Codespaces dev container
+!.devcontainer/
+!.devcontainer/**
 
 # Per-project bash audit log (written by .claude/hooks/log-bash.py)
 .claude/session.log

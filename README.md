@@ -1,11 +1,19 @@
-# Coograph
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+    <img src="docs/logo-light.svg" alt="Coograph — graph-first context for AI coding" width="520">
+  </picture>
+</p>
 
-[![Website](https://img.shields.io/badge/site-coograph.com-D4501F?style=flat-square&labelColor=1A1A1A)](https://coograph.com)
-[![Docs](https://img.shields.io/badge/docs-read-2A2A2A?style=flat-square&labelColor=1A1A1A)](https://coograph.com/docs/)
-[![Roadmap](https://img.shields.io/badge/roadmap-public-2A2A2A?style=flat-square&labelColor=1A1A1A)](https://coograph.com/roadmap/)
-[![License](https://img.shields.io/badge/license-MIT-2A2A2A?style=flat-square&labelColor=1A1A1A)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/paullukic/coograph?style=flat-square&labelColor=1A1A1A&color=2A2A2A)](https://github.com/paullukic/coograph/stargazers)
-[![Issues](https://img.shields.io/github/issues/paullukic/coograph?style=flat-square&labelColor=1A1A1A&color=2A2A2A)](https://github.com/paullukic/coograph/issues)
+<p align="center">
+  <a href="https://coograph.com"><img src="https://img.shields.io/badge/site-coograph.com-D4501F?style=flat-square&labelColor=1A1A1A" alt="Website"></a>
+  <a href="https://coograph.com/docs/"><img src="https://img.shields.io/badge/docs-read-2A2A2A?style=flat-square&labelColor=1A1A1A" alt="Docs"></a>
+  <a href="https://coograph.com/roadmap/"><img src="https://img.shields.io/badge/roadmap-public-2A2A2A?style=flat-square&labelColor=1A1A1A" alt="Roadmap"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2A2A2A?style=flat-square&labelColor=1A1A1A" alt="License"></a>
+  <a href="https://github.com/paullukic/coograph/stargazers"><img src="https://img.shields.io/github/stars/paullukic/coograph?style=flat-square&labelColor=1A1A1A&color=2A2A2A" alt="Stars"></a>
+  <a href="https://github.com/paullukic/coograph/issues"><img src="https://img.shields.io/github/issues/paullukic/coograph?style=flat-square&labelColor=1A1A1A&color=2A2A2A" alt="Issues"></a>
+  <a href="https://codespaces.new/paullukic/coograph"><img src="https://github.com/codespaces/badge.svg" alt="Open in GitHub Codespaces" height="20"></a>
+</p>
 
 Reusable AI coding assistant configuration for any project. Works with **Claude Code**, **VS Code Copilot**, **Codex CLI**, **OpenCode**, **Cursor**, **Windsurf**, **Aider**, and **Cline** — eight tools, one unified workflow.
 
@@ -17,13 +25,15 @@ Ships a structured workflow, specialized agents with anti-hallucination guardrai
 
 - [Quick Start](#quick-start)
 - [What's Inside](#whats-inside)
+- [How it compares](#how-it-compares)
 - [Workflow](#workflow)
 - [Agents](#agents)
 - [Claude Code Hooks](#claude-code-hooks)
 - [Code Graph](#code-graph)
-- [Project Sync](#project-sync)
 - [Customization](#customization)
-- [Reliability](#reliability)
+- [Star history](#star-history)
+- [Acknowledgments](#acknowledgments)
+- [Sponsor](#sponsor)
 
 ## Quick Start
 
@@ -56,6 +66,20 @@ Manual setup: see [SETUP.md](SETUP.md). Prerequisites and visualizer: see [.gith
 | **Code Graph** | SQLite dependency graph with MCP server for targeted queries |
 | **Instructions** | Domain-specific guidance (testing, styling) loaded on demand |
 | **Sync** | Template updates propagate to every registered project on `git pull` |
+
+## How it compares
+
+|  | **Coograph** | cookiecutter / copier | plain `CLAUDE.md` | raw cursor rules |
+|---|---|---|---|---|
+| AI tools supported | 8 (unified) | template-only | 1 (Claude) | 1 (Cursor) |
+| Code graph (MCP) | yes — SQLite + tree-sitter | no | no | no |
+| Workflow gate | OpenSpec proposal flow | none | manual / ad-hoc | manual / ad-hoc |
+| Sync template updates | `git pull` → all projects | re-render template | manual edit | manual edit |
+| Anti-hallucination guards | hooks + agent constraints | none | depends on prose | none |
+| Cost to adopt | 2 min `/coograph-init` | scaffold one repo | copy-paste a file | copy-paste rules |
+| License | MIT | varies | n/a | n/a |
+
+Cookiecutter scaffolds files. Coograph scaffolds **a workflow** — files plus the agent procedures, hooks, and graph that make those files actually load when the AI runs.
 
 ## Workflow
 
@@ -156,7 +180,10 @@ Outputs `.code-graph/graph.html` — a standalone HTML file (no server needed). 
 
 Full reference (install, MCP config, supported stacks, tool list): [.github/code-graph/README.md](.github/code-graph/README.md).
 
-## Project Sync
+<details>
+<summary><strong>Project Sync</strong> — template updates propagate to every registered project on <code>git pull</code></summary>
+
+<br>
 
 Template updates propagate to every registered project automatically.
 
@@ -184,6 +211,8 @@ Sync output appends to `.github/sync.log`.
 
 **Migrations:** when a template update changes a user-owned file (`CLAUDE.md`, `.github/copilot-instructions.md`, `openspec/config.yaml`), sync skips it to preserve your customizations. Any such change is recorded in [MIGRATION.md](MIGRATION.md) with the exact text to apply by hand. Check that file after every `git pull` in coograph.
 
+</details>
+
 ## Customization
 
 After initialization, review these manually:
@@ -194,7 +223,10 @@ After initialization, review these manually:
 
 **Trimming for small projects:** only `.github/copilot-instructions.md` is required. Delete any of `.github/agents/`, `.github/skills/`, `.claude/`, `openspec/`, or `.github/code-graph/` you don't use.
 
-## Reliability
+<details>
+<summary><strong>Reliability</strong> — anti-hallucination, workflow safety, token efficiency</summary>
+
+<br>
 
 **Anti-hallucination**
 - Every review/verify finding must cite a verbatim quote from a fresh file read — diffs and memory are not valid sources.
@@ -212,6 +244,35 @@ After initialization, review these manually:
 - Graph-first: `get_minimal_context(task)` returns 4-6 relevant files instead of grepping 200+.
 - Progressive disclosure: testing/styling instructions load only when editing matching files.
 - Memory-pointer pattern: large intermediate results written to files, referenced by path.
+
+</details>
+
+## Star history
+
+<a href="https://star-history.com/#paullukic/coograph&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=paullukic/coograph&type=Date&theme=dark">
+    <img alt="Star history" src="https://api.star-history.com/svg?repos=paullukic/coograph&type=Date">
+  </picture>
+</a>
+
+## Acknowledgments
+
+Coograph stands on top of work done by many others.
+
+- [Tree-sitter](https://tree-sitter.github.io/) — parser frontend powering every language in the code graph
+- [Model Context Protocol](https://modelcontextprotocol.io/) — Anthropic's open standard the code-graph server speaks
+- [Anthropic Claude Code](https://docs.anthropic.com/claude/docs/claude-code), [GitHub Copilot](https://github.com/features/copilot), [OpenAI Codex CLI](https://github.com/openai/codex), [sst/opencode](https://opencode.ai), [Cursor](https://cursor.com), [Windsurf](https://windsurf.com), [Aider](https://aider.chat), [Cline](https://cline.bot) — the eight tools coograph plugs into
+- [D3](https://d3js.org/) — force-directed visualization
+- [SQLite](https://sqlite.org/) — the only database that earns its way into every machine
+
+## Sponsor
+
+If coograph saves you grep-reads, consider [sponsoring on GitHub](https://github.com/sponsors/paullukic). Funds maintenance, language coverage, and the public roadmap.
+
+## Share
+
+Tell someone about it: [tweet about coograph](https://twitter.com/intent/tweet?text=Graph-first%20context%20for%20AI%20coding.%20%2Fcoograph-init%20works%20across%208%20tools.&url=https%3A%2F%2Fcoograph.com&hashtags=ai,coding,opensource)
 
 ## License
 
