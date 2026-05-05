@@ -23,7 +23,7 @@ Ships a structured workflow, specialized agents with anti-hallucination guardrai
 | Claude Code | `/coograph:init` |
 | VS Code Copilot | Invoke the `initialize-project` skill |
 
-The initializer detects your stack, fills all `_TBD_` placeholders, and optionally sets up the code-graph. About 2 minutes.
+Supports Claude Code, VS Code Copilot, OpenAI Codex CLI, Cursor, Windsurf, Aider, and Cline. The initializer prompts which tools to set up (multi-select), detects your stack, fills all `_TBD_` placeholders, and optionally sets up the code-graph. About 2 minutes.
 
 Manual setup: see [SETUP.md](SETUP.md). Prerequisites and visualizer: see [.github/code-graph/README.md](.github/code-graph/README.md).
 

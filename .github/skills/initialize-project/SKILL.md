@@ -17,11 +17,15 @@ Initialize a new project with this Coograph template. Auto-detect the tech stack
 Ask the user these questions one at a time (wait for each answer before proceeding):
 
 1. **Target project path** — "What is the full path to the project you want to initialize?" (If provided as argument, use that.)
-2. **Which AI tools should I set up for?**
-   - Claude Code (`CLAUDE.md`, `.claude/commands/`)
-   - VS Code Copilot (`.github/agents/`, `.github/skills/`, `.github/prompts/`, `AGENTS.md`)
-   - Both (recommended default)
-   - Note: `.github/copilot-instructions.md` and `.github/instructions/` are always copied — both tools read them.
+2. **Which AI tools should I set up for?** (multi-select — accept any combination)
+   - **Claude Code** — `CLAUDE.md`, `.claude/commands/`, `.claude/hooks/`, `.claude/settings.json`
+   - **VS Code Copilot** — `.github/agents/`, `.github/skills/`, `AGENTS.md`
+   - **Codex CLI** — `AGENTS.md` (auto-read; same file as VS Code Copilot)
+   - **Cursor** — `.cursor/rules/coograph.mdc` (from `templates/cursor/`)
+   - **Windsurf** — `.windsurfrules` (from `templates/windsurf/`)
+   - **Aider** — `CONVENTIONS.md` (from `templates/aider/`)
+   - **Cline** — `.clinerules` (from `templates/cline/`)
+   - Note: `.github/copilot-instructions.md` and `.github/instructions/` (which contains `brutal-honesty.instructions.md`) are always copied — every tool reads or references them.
 3. **Any sections to skip entirely?** (e.g., i18n, API design, data layer) — optional, user can say "none"
 4. **Any additional project-specific coding/review rules?**
   - Ask for concise bullets (for example: mandatory architecture patterns, domain invariants, naming restrictions, module boundaries, logging/security constraints).
@@ -69,25 +73,37 @@ Present findings in a summary table and ask the user to confirm or correct befor
 
 Copy files from the coograph repo to the target project. Only copy what's relevant to the tools selected in Step 1.
 
-**Always copy (shared conventions used by both tools):**
+**Always copy (shared conventions used by every tool):**
 - `.github/copilot-instructions.md` (CLAUDE.md pre-flight + on-demand reads depend on this)
-- `.github/instructions/` (all instruction `.md` files — testing, styling, etc.)
+- `.github/instructions/` (all instruction `.md` files — testing, styling, brutal-honesty)
 - `openspec/config.yaml` (create `openspec/` dir if needed)
-
-**For VS Code Copilot:**
-- `.github/agents/` (all agent `.md` files)
-- `.github/skills/` (all skill directories including `initialize-project/` — the target project can use it to initialize other projects later)
-- `.github/prompts/` (all prompt `.md` files)
-- `AGENTS.md`
 
 **For Claude Code:**
 - `CLAUDE.md`
-- `.claude/commands/project/` (all command files EXCEPT `initialize.md`)
+- `.claude/commands/project/` (all command files)
+- `.claude/commands/coograph/init.md` (the init command itself, so the project can re-init others)
 - `.claude/hooks/` (all hook scripts — block-generated, log-bash, report-graph, warn-scope)
 - `.claude/settings.json` (wires the hooks into Claude Code lifecycle events)
 - Do NOT copy `.claude/settings.local.json` — that's per-machine personal overrides
 
-**For both:** all of the above (Always + VS Code + Claude Code lists).
+**For VS Code Copilot AND Codex CLI** (both read `AGENTS.md`):
+- `.github/agents/` (all agent `.md` files — used by VS Code Copilot Chat)
+- `.github/skills/` (all skill directories including `initialize-project/` — the target project can use it to initialize other projects later)
+- `AGENTS.md`
+
+**For Cursor:**
+- `templates/cursor/.cursor/` → target project's `.cursor/` (preserves rules subdirectory structure)
+
+**For Windsurf:**
+- `templates/windsurf/.windsurfrules` → target project root `.windsurfrules`
+
+**For Aider:**
+- `templates/aider/CONVENTIONS.md` → target project root `CONVENTIONS.md`
+
+**For Cline:**
+- `templates/cline/.clinerules` → target project root `.clinerules`
+
+**Multi-tool selections:** copy the union of all selected tool sections plus the always-copy section. Skip duplicate destinations (e.g. `AGENTS.md` is shared between VS Code Copilot and Codex CLI — copy once).
 
 **Do NOT overwrite** existing files without asking. If a file exists, show both versions side by side (existing vs template) and ask the user how to proceed:
 - **Overwrite** — replace entirely with the template version
