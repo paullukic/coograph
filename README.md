@@ -1,5 +1,12 @@
 # Coograph
 
+[![Website](https://img.shields.io/badge/site-coograph.com-D4501F?style=flat-square&labelColor=1A1A1A)](https://coograph.com)
+[![Docs](https://img.shields.io/badge/docs-read-2A2A2A?style=flat-square&labelColor=1A1A1A)](https://coograph.com/docs/)
+[![Roadmap](https://img.shields.io/badge/roadmap-public-2A2A2A?style=flat-square&labelColor=1A1A1A)](https://coograph.com/roadmap/)
+[![License](https://img.shields.io/badge/license-MIT-2A2A2A?style=flat-square&labelColor=1A1A1A)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/paullukic/coograph?style=flat-square&labelColor=1A1A1A&color=2A2A2A)](https://github.com/paullukic/coograph/stargazers)
+[![Issues](https://img.shields.io/github/issues/paullukic/coograph?style=flat-square&labelColor=1A1A1A&color=2A2A2A)](https://github.com/paullukic/coograph/issues)
+
 Reusable AI coding assistant configuration for any project. Works with **Claude Code**, **VS Code Copilot**, **Codex CLI**, **OpenCode**, **Cursor**, **Windsurf**, **Aider**, and **Cline** — eight tools, one unified workflow.
 
 Ships a structured workflow, specialized agents with anti-hallucination guardrails, Claude Code lifecycle hooks, and an optional code-graph MCP server that replaces brute-force file searching with targeted SQLite queries.
