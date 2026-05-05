@@ -1,7 +1,7 @@
 #!/bin/sh
-# Auto-sync copilot-template updates to all registered projects after git pull.
+# Auto-sync coograph updates to all registered projects after git pull.
 #
-# Install once (in the copilot-template repo):
+# Install once (in the coograph repo):
 #   cp .github/hooks/post-merge .git/hooks/post-merge
 #   chmod +x .git/hooks/post-merge
 #
@@ -13,5 +13,5 @@ cd "$REPO_ROOT" || exit 0
 
 [ -f "projects.json" ] || exit 0   # nothing registered — skip silently
 
-echo "[copilot-template] Syncing updates to registered projects..."
+echo "[coograph] Syncing updates to registered projects..."
 python3 .github/sync.py 2>&1 | tee -a .github/sync.log || true

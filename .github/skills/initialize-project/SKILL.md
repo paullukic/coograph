@@ -1,14 +1,14 @@
 ---
 name: initialize-project
-description: Initialize a new project with the copilot template. Interactive setup that auto-detects the tech stack and fills in all template placeholders.
+description: Initialize a new project with the Coograph template. Interactive setup that auto-detects the tech stack and fills in all template placeholders.
 argument-hint: Target project path (optional — will ask if not provided).
 license: MIT
 metadata:
-  author: copilot-template
+  author: coograph
   version: "1.0"
 ---
 
-Initialize a new project with this copilot template. Auto-detect the tech stack from the target repo and fill in all template placeholders.
+Initialize a new project with this Coograph template. Auto-detect the tech stack from the target repo and fill in all template placeholders.
 
 ---
 
@@ -67,7 +67,7 @@ Present findings in a summary table and ask the user to confirm or correct befor
 
 ## Step 3: Copy Template Files
 
-Copy files from the copilot-template repo to the target project. Only copy what's relevant to the tools selected in Step 1.
+Copy files from the coograph repo to the target project. Only copy what's relevant to the tools selected in Step 1.
 
 **Always copy (shared conventions used by both tools):**
 - `.github/copilot-instructions.md` (CLAUDE.md pre-flight + on-demand reads depend on this)
@@ -134,7 +134,7 @@ Run this step only if the user selected `yes` in Step 1 question 5.
 
 ### 6a. Copy server files
 
-Copy `.github/code-graph/` from the copilot-template to the target project.
+Copy `.github/code-graph/` from the coograph to the target project.
 This includes:
 - `builder.py` — parses source files into SQLite
 - `server.py`  — MCP server exposing tools to the AI assistant
@@ -322,13 +322,13 @@ Verify it is present in the target project by grepping each agent file for the l
 grep -L "MANDATORY — non-negotiable" <target>/.github/agents/*.agent.md
 ```
 
-Files returned (missing the marker) need the block restored — copy the Step 0 block from the matching file in `copilot-template/.github/agents/` verbatim. Do not improvise the wording; the literal HARD RULE phrasing is what enforces the rule.
+Files returned (missing the marker) need the block restored — copy the Step 0 block from the matching file in `coograph/.github/agents/` verbatim. Do not improvise the wording; the literal HARD RULE phrasing is what enforces the rule.
 
 ## Step 8: Register in projects.json
 
-Register the target project so future `git pull` updates in copilot-template auto-propagate.
+Register the target project so future `git pull` updates in coograph auto-propagate.
 
-1. Locate `projects.json` in the copilot-template root (create with `{"projects": []}` if missing).
+1. Locate `projects.json` in the coograph root (create with `{"projects": []}` if missing).
 2. Check if the target project path is already in the list — if so, update it; if not, append:
    ```json
    {
@@ -340,11 +340,11 @@ Register the target project so future `git pull` updates in copilot-template aut
    ```
    Set `tools` to match what was selected in Step 1, `code_graph` to match Step 1 question 5, and `registered_at` to today's date.
 3. Write the updated `projects.json` back.
-4. Run `./setup.sh` in the copilot-template root to ensure git hooks are configured for auto-sync:
+4. Run `./setup.sh` in the coograph root to ensure git hooks are configured for auto-sync:
    ```bash
-   cd <copilot-template-path> && ./setup.sh
+   cd <coograph-path> && ./setup.sh
    ```
-   After setup, every `git pull` in copilot-template will automatically sync updated agents, skills, commands, code-graph files, and `.mcp.json` to all registered projects — and rebuild their graphs if `code_graph: true`.
+   After setup, every `git pull` in coograph will automatically sync updated agents, skills, commands, code-graph files, and `.mcp.json` to all registered projects — and rebuild their graphs if `code_graph: true`.
 
 ## Guardrails
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Sync copilot-template updates to all registered projects.
+"""Sync coograph updates to all registered projects.
 
-Run from the copilot-template root (executed automatically by post-merge hook).
+Run from the coograph root (executed automatically by post-merge hook).
 Reads projects.json, copies pure-template files to each registered project,
 and rebuilds the code-graph + visualizer for projects with code_graph: true.
 """

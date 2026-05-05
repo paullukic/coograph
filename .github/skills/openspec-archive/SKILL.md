@@ -4,7 +4,7 @@ description: Archive a completed change. Use when implementation is done and the
 argument-hint: Change name to archive. If omitted, will prompt for selection.
 license: MIT
 metadata:
-  author: copilot-template
+  author: coograph
   version: "2.0"
 ---
 

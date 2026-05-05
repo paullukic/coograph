@@ -4,7 +4,7 @@ description: Propose a new change with all artifacts generated in one step. Use 
 argument-hint: Change name or description (e.g., "add user settings page").
 license: MIT
 metadata:
-  author: copilot-template
+  author: coograph
   version: "2.0"
 ---
 

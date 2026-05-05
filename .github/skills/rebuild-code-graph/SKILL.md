@@ -4,7 +4,7 @@ description: Rebuild or update the code-graph database. Use when the user wants 
 argument-hint: '"build" for full rebuild (default), "update" for incremental update.'
 license: MIT
 metadata:
-  author: copilot-template
+  author: coograph
   version: "1.0"
 ---
 
@@ -20,7 +20,7 @@ Find `server.py` — it could be in several locations depending on the project s
 
 ```
 .github/code-graph/server.py          # standard location
-copilot-template/.github/code-graph/server.py  # monorepo with template as submodule
+coograph/.github/code-graph/server.py  # monorepo with template as submodule
 ```
 
 Search for it:
@@ -30,7 +30,7 @@ find . -path "*/code-graph/server.py" -not -path "*/node_modules/*" 2>/dev/null 
 ```
 
 If **not found**: stop and tell the user:
-> "No code-graph tooling found. Run the `initialize-project` skill to set it up, or copy `.github/code-graph/` from the copilot-template."
+> "No code-graph tooling found. Run the `initialize-project` skill to set it up, or copy `.github/code-graph/` from the coograph."
 
 If **multiple found**: use the one closest to the current working directory (shortest path). Report which one you're using.
 

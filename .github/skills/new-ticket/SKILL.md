@@ -4,7 +4,7 @@ description: Start work on a new ticket. Runs pre-flight checks, investigates th
 argument-hint: Paste ticket description, URL, or summary
 license: MIT
 metadata:
-  author: copilot-template
+  author: coograph
   version: "1.0"
 ---
 

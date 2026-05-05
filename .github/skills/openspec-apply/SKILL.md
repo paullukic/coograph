@@ -4,7 +4,7 @@ description: Implement tasks from an OpenSpec change. Use when the user wants to
 argument-hint: Change name or slug (e.g., "add-dark-mode"). If omitted, will prompt for selection.
 license: MIT
 metadata:
-  author: copilot-template
+  author: coograph
   version: "2.0"
 ---
 
