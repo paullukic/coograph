@@ -77,6 +77,7 @@ Copy files from the coograph repo to the target project. Only copy what's releva
 **Always copy (shared conventions used by every tool):**
 - `.github/copilot-instructions.md` (CLAUDE.md pre-flight + on-demand reads depend on this)
 - `.github/instructions/` (all instruction `.md` files — testing, styling, brutal-honesty)
+- `.github/skills/` (all skill directories — every supported tool delegates here, including the Claude Code command wrappers in `.claude/commands/` and the multi-tool slash registrations under `templates/`)
 - `openspec/config.yaml` (create `openspec/` dir if needed)
 
 **For Claude Code:**
@@ -89,36 +90,36 @@ Copy files from the coograph repo to the target project. Only copy what's releva
 
 **For VS Code Copilot:**
 - `.github/agents/` (all agent `.md` files — used by VS Code Copilot Chat)
-- `.github/skills/` (all skill directories including `coograph-init/` — the target project can use it to initialize other projects later)
 - `AGENTS.md`
+- (`.github/skills/` is in the always-copy block above — VS Code Copilot consumes it but does not need a tool-specific copy directive)
 
 **For Codex CLI:**
 - `.agents/skills/coograph-init/SKILL.md` (Codex scans `.agents/skills/` from repo root and surfaces it as the `/coograph-init` slash)
 - `AGENTS.md` (auto-read by Codex CLI; same file as VS Code Copilot — copy once)
-- `.github/skills/coograph-init/` (the canonical procedure the Codex skill delegates to)
+- (delegates to `.github/skills/coograph-init/` — already supplied by the always-copy block)
 
 **For OpenCode:**
 - `.opencode/commands/coograph-init.md` (registers `/coograph-init` slash in OpenCode — note the plural `commands/`)
 - `AGENTS.md` (auto-read by OpenCode; same file as VS Code Copilot — copy once)
-- `.github/skills/coograph-init/` (the canonical procedure the OpenCode command delegates to)
+- (delegates to `.github/skills/coograph-init/` — already supplied by the always-copy block)
 
 **For Cursor:**
 - `templates/cursor/.cursor/` → target project's `.cursor/` (preserves rules subdirectory structure)
-- Cursor has no native slash registration; the `coograph.mdc` rule tells the agent to follow `.github/skills/coograph-init/SKILL.md` whenever the user types `/coograph-init`. Copy `.github/skills/coograph-init/` too.
+- Cursor has no native slash registration; the `coograph.mdc` rule tells the agent to follow `.github/skills/coograph-init/SKILL.md` whenever the user types `/coograph-init` (skills directory already supplied by the always-copy block).
 
 **For Windsurf:**
 - `templates/windsurf/.windsurfrules` → target project root `.windsurfrules`
-- Windsurf has no native slash registration; the rule fires when the user types `/coograph-init`. Copy `.github/skills/coograph-init/` too.
+- Windsurf has no native slash registration; the rule fires when the user types `/coograph-init` (skills directory already supplied by the always-copy block).
 
 **For Aider:**
 - `templates/aider/CONVENTIONS.md` → target project root `CONVENTIONS.md`
-- Aider has no native slash registration; the convention fires when the user types `/coograph-init`. Copy `.github/skills/coograph-init/` too.
+- Aider has no native slash registration; the convention fires when the user types `/coograph-init` (skills directory already supplied by the always-copy block).
 
 **For Cline:**
 - `templates/cline/.clinerules` → target project root `.clinerules`
-- Cline has no native slash registration; the rule fires when the user types `/coograph-init`. Copy `.github/skills/coograph-init/` too.
+- Cline has no native slash registration; the rule fires when the user types `/coograph-init` (skills directory already supplied by the always-copy block).
 
-**Multi-tool selections:** copy the union of all selected tool sections plus the always-copy section. Skip duplicate destinations (e.g. `AGENTS.md` is shared between VS Code Copilot, Codex CLI, and OpenCode — copy once; `.github/skills/coograph-init/` is needed by every tool except Claude Code — copy once).
+**Multi-tool selections:** copy the union of all selected tool sections plus the always-copy section. Skip duplicate destinations (e.g. `AGENTS.md` is shared between VS Code Copilot, Codex CLI, and OpenCode — copy once). `.github/skills/` is in the always-copy block; do not re-copy it from per-tool selections.
 
 **Do NOT overwrite** existing files without asking. If a file exists, show both versions side by side (existing vs template) and ask the user how to proceed:
 - **Overwrite** — replace entirely with the template version
