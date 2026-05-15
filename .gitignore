@@ -40,9 +40,10 @@ Thumbs.db
 !.devcontainer/
 !.devcontainer/**
 
-# Per-project bash audit log (written by .claude/hooks/log-bash.py)
-.claude/session.log
-.claude/sessions/
+# Per-project bash audit log (written by .claude/hooks/log-bash.py,
+# .codex/hooks/log-bash.py, and .opencode/plugin/log-bash.ts — all
+# three target the same files so cross-tool incidents grep cleanly).
+.coograph/
 # Local Claude Code overrides — never synced, never committed
 .claude/settings.local.json
 

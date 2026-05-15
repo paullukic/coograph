@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
-"""log-bash: PreToolUse hook that audits every Bash command the agent runs.
+"""log-bash: Codex CLI PreToolUse hook that audits every Bash command.
 
-Two layers of trail, both per-project and gitignored, under the unified
-`.coograph/` directory so every supported agent writes to the same place:
+Mirror of `.claude/hooks/log-bash.py` — same `.coograph/` output layout,
+different `agent` prefix in the log lines so cross-tool incident response
+can grep by agent.
 
-  .coograph/session.log
-      Chronological tail of every command across every session, each line
-      prefixed with the tool name and a short session-id so you can grep
-      one session out of the combined stream.
+Wire it into Codex CLI by adding to `~/.codex/config.toml` (user-global
+config — Codex does not read project-local config.toml for hooks):
 
-  .coograph/sessions/<session_id>.log
-      One file per agent session. No prefix in the lines because the
-      filename already carries it. Easy to attach to an incident report
-      or share a single conversation's command history.
+    [[hooks.PreToolUse]]
+    matcher = "^Bash$"
 
-This script is the Claude Code variant. The Codex CLI variant lives at
-`.codex/hooks/log-bash.py` and writes to the same files. The OpenCode
-plugin at `.opencode/plugin/log-bash.ts` does the same in TypeScript.
+    [[hooks.PreToolUse.hooks]]
+    type = "command"
+    command = '/usr/bin/python3 "$(git rev-parse --show-toplevel)/.codex/hooks/log-bash.py"'
+    timeout = 5
 
 The hook never blocks the tool call. Write failures are swallowed silently.
 """
@@ -29,7 +27,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-AGENT = "claude-code"
+AGENT = "codex-cli"
 
 
 def main() -> int:
@@ -46,8 +44,6 @@ def main() -> int:
         return 0
 
     raw_sid = str(payload.get("session_id") or "unknown")
-    # Defensive: Claude Code session ids are UUIDs, but other agent payloads
-    # may differ. Strip anything that is not safe in a filename.
     safe_sid = "".join(c for c in raw_sid if c.isalnum() or c in "-_")[:64] or "unknown"
     short_sid = safe_sid[:8]
 

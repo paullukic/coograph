@@ -136,7 +136,7 @@ Lifecycle hooks in `.claude/hooks/`, wired via `.claude/settings.json`. They run
 | Hook | Event | What it does |
 |------|-------|--------------|
 | **`block-generated.py`** | PreToolUse (Edit/Write) | **Blocks** edits to files under `generated/`, `dist/`, `build/`, `.next/`, `node_modules/`, or anything with `@generated` / `DO NOT EDIT` / `AUTO-GENERATED` in the first 5 lines. Protects codegen output from accidental hand-edits. |
-| **`log-bash.py`** | PreToolUse (Bash) | Appends every bash command to `.claude/session.log` *and* `.claude/sessions/<session_id>.log` (both gitignored, per-project). Two-layer audit trail — see [Bash audit log](#bash-audit-log) below. |
+| **`log-bash.py`** | PreToolUse (Bash) | Appends every bash command to `.coograph/session.log` *and* `.coograph/sessions/<session_id>.log` (both gitignored, per-project). Two-layer audit trail. Codex CLI + OpenCode variants write to the same files — see [Bash audit log](#bash-audit-log) below. |
 | **`report-graph.py`** | SessionStart | Reports code-graph state at session start: `[code-graph] N nodes, M edges, SIZEkb, updated Xh ago`. Prints a rebuild hint if `graph.db` is missing but the server is present. |
 | **`warn-scope.py`** | PreToolUse (Edit/Write) | If an active OpenSpec exists, **warns** (non-blocking) when editing a file not referenced in its `tasks.md`. Surfaces scope creep without stopping work. |
 
@@ -144,29 +144,70 @@ Personal or machine-specific overrides go in `.claude/settings.local.json` (giti
 
 ### Bash audit log
 
-`log-bash.py` writes every Bash invocation to **two** files inside the project, before the command runs:
+Every supported agent writes every Bash command it runs to **two** files inside the project, before the command executes:
 
 | File | Format per line | When to read |
 |---|---|---|
-| `.claude/session.log` | `[YYYY-MM-DD HH:MM:SS] [<sid8>] <command>` | One chronological tail across every session ever. `grep` to scope to a session-id, a date, or a command pattern. Survives `ls`-style scanning at the project root. |
-| `.claude/sessions/<session_id>.log` | `[YYYY-MM-DD HH:MM:SS] <command>` | One file per Claude Code session. No session-id prefix because the filename already carries it. Attach to incident reports or share with a reviewer when you only need the scope of one session. |
+| `.coograph/session.log` | `[YYYY-MM-DD HH:MM:SS] [<agent>] [<sid8>] <command>` | One chronological tail across every agent + every session. Grep by date, by agent name (`claude-code`, `codex-cli`, `opencode`), by short session id, or by command pattern. Best for cross-session questions. |
+| `.coograph/sessions/<session_id>.log` | `[YYYY-MM-DD HH:MM:SS] [<agent>] <command>` | One file per agent session. No session-id prefix because the filename already carries it. Attach to incident reports or share with a reviewer when you only need the scope of one session. |
 
-Both files are gitignored, per-project, append-only, and local-first — nothing leaves the machine. The hook never blocks the tool call; write failures are swallowed silently so a broken disk or permission glitch can never wedge the agent.
+Both files are gitignored, per-project, append-only, and local-first — nothing leaves the machine. Concurrent agents writing in parallel are safe: each per-session file has a single writer, and the global tail relies on POSIX `O_APPEND` (4 KB-atomic) on Linux/macOS and NTFS `FILE_APPEND_DATA` (atomic per syscall) on Windows. Lines interleave cleanly at line boundaries, never mid-line.
 
-The session id comes from the agent payload (Claude Code passes a UUID per chat session). Payloads from other agents that don't set `session_id` fall through to `unknown` — they still get logged, just bucketed together.
+Write failures are swallowed silently — the hook never blocks the tool call.
 
-**Why two files?** The single-tail file is the one humans use day-to-day. The per-session file is the one you hand to an incident response: it scopes the blast radius to a known time window without leaking unrelated activity. Both are written from the same hook in one pass — no extra cost.
+#### Per-tool support
+
+Eight tools, three of them have hook APIs we can use:
+
+| Tool | Audit support | How |
+|---|---|---|
+| **Claude Code** | ✅ shipped | `.claude/hooks/log-bash.py` wired via `.claude/settings.json` PreToolUse Bash hook. |
+| **Codex CLI** | ✅ shipped | `.codex/hooks/log-bash.py` — same script shape. Wire it once per machine in `~/.codex/config.toml` (see [setup](#codex-cli-audit-setup) below). Codex passes the same `tool_name` / `tool_input.command` / `session_id` / `cwd` payload shape so the script Just Works. |
+| **OpenCode** | ✅ shipped | `.opencode/plugin/log-bash.ts` — uses OpenCode's `tool.execute.before` plugin event. Loaded automatically by OpenCode at session start. |
+| **VS Code Copilot** | ⛔ no hook API | Copilot Chat does not expose a pre-tool-use hook in any public API as of 2026-05. Commands run inside the VS Code process with no interception point. Falls back to VS Code's own command history if you need a trail. |
+| **Cursor** | ⛔ no hook API | Rules files only; no pre-tool-use hook surface. Use Cursor's terminal history. |
+| **Windsurf** | ⛔ no hook API | Same — rules-only, no hook system exposed. |
+| **Aider** | ⛔ no shell-level hook | Aider has lint/test hooks but no pre-shell-execute hook. Use shell-level `trap DEBUG` if you must. |
+| **Cline** | ⛔ no hook API | VS Code extension with no public hook surface. |
+
+For tools without an audit hook, the honest fallback is shell-level instrumentation (`PROMPT_COMMAND`, `trap DEBUG`, `auditd` on Linux). That's outside the scope of what Coograph can configure for you, but the design pattern is the same: capture the command before it runs, write to `.coograph/session.log` with an agent prefix.
+
+#### Codex CLI audit setup
+
+Codex reads hook config from `~/.codex/config.toml` only (no project-local override yet). Add this once per machine:
+
+```toml
+[[hooks.PreToolUse]]
+matcher = "^Bash$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = '/usr/bin/python3 "$(git rev-parse --show-toplevel)/.codex/hooks/log-bash.py"'
+timeout = 5
+```
+
+The `$(git rev-parse --show-toplevel)` indirection means one global config row works across every Coograph-initialized project on the machine.
+
+#### Useful grep recipes
 
 ```bash
-# scope an incident to one session
-cat .claude/sessions/4f1c8b3e-a2d1-4f9c-8e7a-2b3c5d6e7f8a.log
+# scope an incident to one session (any agent)
+cat .coograph/sessions/4f1c8b3e-a2d1-4f9c-8e7a-2b3c5d6e7f8a.log
 
-# find every `npm install` the agent ran across all sessions
-grep "npm install" .claude/session.log
+# every `npm install` ever, across all agents + sessions
+grep "npm install" .coograph/session.log
 
-# spot-check the last 50 commands across all sessions
-tail -50 .claude/session.log
+# every command Codex CLI ran in the last week
+grep "\[codex-cli\]" .coograph/session.log | awk -F'] ' '$1 >= "['"$(date -d '7 days ago' '+%Y-%m-%d')"'"'
+
+# which sessions ran something suspicious, ranked by frequency
+grep "curl.*| *sh" .coograph/session.log | grep -oE '\[[a-f0-9]{8}\]' | sort | uniq -c | sort -rn
+
+# tail the live stream while debugging an agent run
+tail -f .coograph/session.log
 ```
+
+**Migrating from the legacy `.claude/session.log` path:** earlier versions of Coograph wrote audit lines to `.claude/session.log` and `.claude/sessions/`. If you have old logs there, `mv .claude/session.log .coograph/session.log.legacy` once and the new path takes over from the next command on. No automatic migration — the legacy file is not touched on its own.
 
 ## Code Graph
 
