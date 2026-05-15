@@ -136,11 +136,37 @@ Lifecycle hooks in `.claude/hooks/`, wired via `.claude/settings.json`. They run
 | Hook | Event | What it does |
 |------|-------|--------------|
 | **`block-generated.py`** | PreToolUse (Edit/Write) | **Blocks** edits to files under `generated/`, `dist/`, `build/`, `.next/`, `node_modules/`, or anything with `@generated` / `DO NOT EDIT` / `AUTO-GENERATED` in the first 5 lines. Protects codegen output from accidental hand-edits. |
-| **`log-bash.py`** | PreToolUse (Bash) | Appends every bash command to `.claude/session.log` (gitignored, per-project). Audit trail for what the agent actually ran. |
+| **`log-bash.py`** | PreToolUse (Bash) | Appends every bash command to `.claude/session.log` *and* `.claude/sessions/<session_id>.log` (both gitignored, per-project). Two-layer audit trail — see [Bash audit log](#bash-audit-log) below. |
 | **`report-graph.py`** | SessionStart | Reports code-graph state at session start: `[code-graph] N nodes, M edges, SIZEkb, updated Xh ago`. Prints a rebuild hint if `graph.db` is missing but the server is present. |
 | **`warn-scope.py`** | PreToolUse (Edit/Write) | If an active OpenSpec exists, **warns** (non-blocking) when editing a file not referenced in its `tasks.md`. Surfaces scope creep without stopping work. |
 
 Personal or machine-specific overrides go in `.claude/settings.local.json` (gitignored, never synced). `.claude/settings.json` is template-managed and gets overwritten on sync.
+
+### Bash audit log
+
+`log-bash.py` writes every Bash invocation to **two** files inside the project, before the command runs:
+
+| File | Format per line | When to read |
+|---|---|---|
+| `.claude/session.log` | `[YYYY-MM-DD HH:MM:SS] [<sid8>] <command>` | One chronological tail across every session ever. `grep` to scope to a session-id, a date, or a command pattern. Survives `ls`-style scanning at the project root. |
+| `.claude/sessions/<session_id>.log` | `[YYYY-MM-DD HH:MM:SS] <command>` | One file per Claude Code session. No session-id prefix because the filename already carries it. Attach to incident reports or share with a reviewer when you only need the scope of one session. |
+
+Both files are gitignored, per-project, append-only, and local-first — nothing leaves the machine. The hook never blocks the tool call; write failures are swallowed silently so a broken disk or permission glitch can never wedge the agent.
+
+The session id comes from the agent payload (Claude Code passes a UUID per chat session). Payloads from other agents that don't set `session_id` fall through to `unknown` — they still get logged, just bucketed together.
+
+**Why two files?** The single-tail file is the one humans use day-to-day. The per-session file is the one you hand to an incident response: it scopes the blast radius to a known time window without leaking unrelated activity. Both are written from the same hook in one pass — no extra cost.
+
+```bash
+# scope an incident to one session
+cat .claude/sessions/4f1c8b3e-a2d1-4f9c-8e7a-2b3c5d6e7f8a.log
+
+# find every `npm install` the agent ran across all sessions
+grep "npm install" .claude/session.log
+
+# spot-check the last 50 commands across all sessions
+tail -50 .claude/session.log
+```
 
 ## Code Graph
 

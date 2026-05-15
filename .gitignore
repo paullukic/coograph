@@ -42,6 +42,7 @@ Thumbs.db
 
 # Per-project bash audit log (written by .claude/hooks/log-bash.py)
 .claude/session.log
+.claude/sessions/
 # Local Claude Code overrides — never synced, never committed
 .claude/settings.local.json
 
