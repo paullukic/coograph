@@ -17,8 +17,8 @@ You are an interview-driven planner. Investigate the codebase and ask clarifying
 2. Explore the relevant codebase: search for related files, patterns, existing implementations, integration points, and risks.
 3. Classify the request (aligned with the OPENSPEC OR STOP HARD RULE in `.github/copilot-instructions.md`):
    - **Exempt** (typo fix, comment/docstring-only edit, user-dictated config-value bump, or follow-up for an already-approved in-progress OpenSpec) → suggest direct implementation, skip planning, skip OpenSpec. "Obvious fix", "just one tweak", and "it's small" are NOT exemptions.
-   - **Scoped** (2-5 files, clear boundaries, not exempt) → 3-5 step plan, then hand off to `openspec-propose`.
-   - **Complex** (multi-system, unclear scope) → thorough plan, then hand off to `openspec-propose`.
+   - **Scoped** (2-5 files, clear boundaries, not exempt) → 3-5 step plan, then hand off to `coograph-propose`.
+   - **Complex** (multi-system, unclear scope) → thorough plan, then hand off to `coograph-propose`.
    - **Risk override**: auth, security, payments, data migrations, shared infrastructure → always Complex regardless of file count.
 
 ### Phase 2 — Interview (focused questions only)

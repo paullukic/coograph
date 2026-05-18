@@ -101,17 +101,17 @@ flowchart LR
 
 | Step | Claude Code | VS Code Copilot |
 |------|-------------|----------------|
-| Start a new ticket | `/project:new-ticket` | `new-ticket` prompt / skill |
-| Plan | `/project:plan` | `@Planner` |
-| Propose | `openspec-propose` skill | `openspec-propose` skill |
-| Apply | `openspec-apply` skill | `openspec-apply` skill |
-| Review | `/project:review` | `@Reviewer` |
-| Verify | `/project:verify` | `@Verifier` |
-| Debug | `/project:debug` | `@Debugger` |
-| Explore | `/project:explore` | `@Explore` |
-| Archive | `openspec-archive` skill | `openspec-archive` skill |
+| Start a new ticket | `/coograph-new-ticket` | `coograph-new-ticket` prompt / skill |
+| Plan | `/coograph-plan` | `@Planner` |
+| Propose | `coograph-propose` skill | `coograph-propose` skill |
+| Apply | `coograph-apply` skill | `coograph-apply` skill |
+| Review | `/coograph-review` | `@Reviewer` |
+| Verify | `/coograph-verify` | `@Verifier` |
+| Debug | `/coograph-debug` | `@Debugger` |
+| Search | `/coograph-search` | `@Explore` |
+| Archive | `coograph-archive` skill | `coograph-archive` skill |
 
-`/project:new-ticket` is the recommended entry point when you paste a ticket, issue, or task description — it runs pre-flight, investigates the codebase, and hands off to `/project:plan` or the `openspec-propose` skill. Use the individual steps directly when you already know where you are in the workflow.
+`/coograph-new-ticket` is the recommended entry point when you paste a ticket, issue, or task description — it runs pre-flight, investigates the codebase, and hands off to `/coograph-plan` or the `coograph-propose` skill. Use the individual steps directly when you already know where you are in the workflow.
 
 OpenSpec changes live in `openspec/changes/<date>-<slug>/` with `proposal.md`, `specs/<capability>/spec.md`, and `tasks.md`. Completed changes move to `openspec/changes/archive/`.
 
