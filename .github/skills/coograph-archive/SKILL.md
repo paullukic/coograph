@@ -1,5 +1,5 @@
 ---
-name: openspec-archive
+name: coograph-archive
 description: Archive a completed change. Use when implementation is done and the change is ready to be moved to the archive.
 argument-hint: Change name to archive. If omitted, will prompt for selection.
 license: MIT

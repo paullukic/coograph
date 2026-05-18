@@ -1,5 +1,5 @@
 ---
-name: new-ticket
+name: coograph-new-ticket
 description: Start work on a new ticket. Runs pre-flight checks, investigates the codebase, and flows into OpenSpec proposal. Use when the user pastes a ticket, issue, or task description.
 argument-hint: Paste ticket description, URL, or summary
 license: MIT
@@ -51,7 +51,7 @@ If the ticket is specific and well-scoped:
 
 ## Step 4: Flow into OpenSpec proposal
 
-Once investigation is complete and requirements are clear, invoke the **openspec-propose** skill to create the proposal.
+Once investigation is complete and requirements are clear, invoke the **coograph-propose** skill to create the proposal.
 
 Pass it a clear description synthesized from the ticket + your investigation findings.
 

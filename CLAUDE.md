@@ -80,9 +80,9 @@ Before any non-trivial implementation, follow: **Plan → Propose → Apply**. N
 
 ### Step 1: Plan
 
-- **Run `/project:plan`** for new tickets, unclear requirements, or non-obvious scope.
+- **Run `/coograph-plan`** for new tickets, unclear requirements, or non-obvious scope.
 - **Skip planning** when review output already exists in conversation, or the user specifies the problem, files, and fix direction.
-- **Bug reports**: Run `/project:debug`. If the fix is a one-line exempt change (per literal list above), apply it. Otherwise go to Step 2.
+- **Bug reports**: Run `/coograph-debug`. If the fix is a one-line exempt change (per literal list above), apply it. Otherwise go to Step 2.
 
 ### Step 2: Propose (OpenSpec)
 
@@ -98,7 +98,7 @@ See `openspec/changes/archive/` for reference. **Wait for user approval** before
 
 - Work through `tasks.md` in order. Mark tasks done as you go.
 - Read every file before editing. Check API spec / generated types before assuming names.
-- If you hit a non-obvious build error, run `/project:debug`.
+- If you hit a non-obvious build error, run `/coograph-debug`.
 - Mid-implementation requirement changes: update the OpenSpec, then continue.
 - Continuing previous work: check `openspec/changes/` for in-progress OpenSpec.
 
@@ -106,7 +106,7 @@ See `openspec/changes/archive/` for reference. **Wait for user approval** before
 
 1. **Quality gates** — run typecheck, lint, format. Fix until clean.
 2. **Feature inventory** — for every modified file, verify all pre-existing features are preserved. For new files, verify against spec.
-3. **Review gate** — run `/project:review`. Fix Critical/Warning findings. Re-run quality gates after fixes. Re-review only if fixes were substantial.
+3. **Review gate** — run `/coograph-review`. Fix Critical/Warning findings. Re-run quality gates after fixes. Re-review only if fixes were substantial.
 4. **Done** — declare completion, ask user for next steps.
 
 ### Archiving
@@ -117,11 +117,11 @@ Move completed OpenSpecs from `openspec/changes/<slug>/` to `openspec/changes/ar
 
 | Situation | Command |
 |-----------|---------|
-| Code review or convention audit | `/project:review` |
-| Bug investigation, build errors | `/project:debug` |
-| Planning / unclear requirements | `/project:plan` |
-| Completion evidence, verification | `/project:verify` |
-| Codebase search, research | `/project:explore` |
+| Code review or convention audit | `/coograph-review` |
+| Bug investigation, build errors | `/coograph-debug` |
+| Planning / unclear requirements | `/coograph-plan` |
+| Completion evidence, verification | `/coograph-verify` |
+| Codebase search, research | `/coograph-search` |
 
 Pass the full task description and relevant file paths when delegating.
 

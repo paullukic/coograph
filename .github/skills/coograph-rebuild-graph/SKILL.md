@@ -1,5 +1,5 @@
 ---
-name: rebuild-code-graph
+name: coograph-rebuild-graph
 description: Rebuild or update the code-graph database. Use when the user wants to refresh the code graph, e.g. after major changes or when graph seems stale.
 argument-hint: '"build" for full rebuild (default), "update" for incremental update.'
 license: MIT

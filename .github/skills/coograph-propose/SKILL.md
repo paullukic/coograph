@@ -1,5 +1,5 @@
 ---
-name: openspec-propose
+name: coograph-propose
 description: Propose a new change with all artifacts generated in one step. Use when the user wants to describe what they want to build and get a complete proposal with specs and tasks ready for implementation.
 argument-hint: Change name or description (e.g., "add user settings page").
 license: MIT

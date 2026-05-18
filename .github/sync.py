@@ -27,6 +27,28 @@ SKIP_SUFFIXES = {".bak", ".pyc", ".db"}
 # Never overwrite these - user has customized them during initialization
 SKIP_FILES = {"CLAUDE.md", "copilot-instructions.md", "config.yaml"}
 
+# Paths a previous template version placed in consumer projects but that
+# have since been renamed or removed. Each sync run deletes these so the
+# rename surfaces cleanly on git pull. Adding entries here is the canonical
+# way to propagate a rename / removal — see MIGRATION.md for the matching
+# user-facing notes.
+OBSOLETE_PATHS = (
+    # 2026-05-18 coograph-skill-rename — old skill dirs
+    ".github/skills/openspec-propose",
+    ".github/skills/openspec-apply",
+    ".github/skills/openspec-archive",
+    ".github/skills/openspec-explore",
+    ".github/skills/new-ticket",
+    ".github/skills/rebuild-code-graph",
+    # 2026-05-18 coograph-skill-rename — old slash command wrappers
+    ".claude/commands/project/new-ticket.md",
+    ".claude/commands/project/plan.md",
+    ".claude/commands/project/review.md",
+    ".claude/commands/project/verify.md",
+    ".claude/commands/project/debug.md",
+    ".claude/commands/project/explore.md",
+)
+
 # ---------------------------------------------------------------------------
 # Logging setup
 # ---------------------------------------------------------------------------
@@ -55,9 +77,10 @@ def _find_uv() -> Path | None:
     return candidate if candidate.exists() else None
 
 
-def _copy_dir(src: Path, dst: Path) -> int:
+def _copy_dir(src: Path, dst: Path, dry_run: bool = False) -> int:
     """Recursively copy src to dst, skipping excluded items. Returns file count."""
-    dst.mkdir(parents=True, exist_ok=True)
+    if not dry_run:
+        dst.mkdir(parents=True, exist_ok=True)
     count = 0
     for item in src.iterdir():
         if item.name in SKIP_DIRS:
@@ -67,18 +90,41 @@ def _copy_dir(src: Path, dst: Path) -> int:
         if item.name in SKIP_FILES:
             continue
         if item.is_dir():
-            count += _copy_dir(item, dst / item.name)
+            count += _copy_dir(item, dst / item.name, dry_run=dry_run)
         else:
-            shutil.copy2(item, dst / item.name)
+            if not dry_run:
+                shutil.copy2(item, dst / item.name)
             count += 1
     return count
+
+
+def _cleanup_obsolete(project_path: Path, dry_run: bool = False) -> int:
+    """Remove paths in OBSOLETE_PATHS from project_path. Returns removed count."""
+    removed = 0
+    prefix = "[DRY-RUN] " if dry_run else ""
+    for rel in OBSOLETE_PATHS:
+        target = project_path / rel
+        if not target.exists():
+            continue
+        if not dry_run:
+            try:
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+            except OSError as e:
+                log.warning("  CLEANUP failed to remove %s: %s", rel, e)
+                continue
+        log.info("  %sCLEANUP removed obsolete %s", prefix, rel)
+        removed += 1
+    return removed
 
 
 # ---------------------------------------------------------------------------
 # Sync
 # ---------------------------------------------------------------------------
 
-def sync_project(project: dict) -> bool:
+def sync_project(project: dict, dry_run: bool = False) -> bool:
     path = Path(project["path"])
     if not path.exists():
         log.warning("SKIP %s (path not found)", path)
@@ -86,67 +132,105 @@ def sync_project(project: dict) -> bool:
 
     tools = set(project.get("tools", []))
     code_graph = project.get("code_graph", False)
-    log.info("  config: tools=%s, code_graph=%s", sorted(tools), code_graph)
+    prefix = "[DRY-RUN] " if dry_run else ""
+    log.info("  %sconfig: tools=%s, code_graph=%s", prefix, sorted(tools), code_graph)
     total = 0
+
+    # Always-copy: .github/skills/ is consumed by every supported tool
+    # (Claude Code, VS Code Copilot, Codex CLI, OpenCode, Cursor, Windsurf,
+    # Aider, Cline). Mirror what coograph-init does at install time.
+    skills_src = TEMPLATE_ROOT / ".github" / "skills"
+    if skills_src.exists():
+        n = _copy_dir(skills_src, path / ".github" / "skills", dry_run=dry_run)
+        log.info("  %s.github/skills  %d files", prefix, n)
+        total += n
 
     # Claude Code commands
     if "claude" in tools:
+        # Top-level coograph-* slash command wrappers (coograph-init,
+        # coograph-new-ticket, coograph-plan, etc.). These live at the
+        # top of .claude/commands/, not under project/.
+        top_src = TEMPLATE_ROOT / ".claude" / "commands"
+        if top_src.exists():
+            top_dst = path / ".claude" / "commands"
+            if not dry_run:
+                top_dst.mkdir(parents=True, exist_ok=True)
+            n = 0
+            for item in top_src.glob("coograph-*.md"):
+                if not dry_run:
+                    shutil.copy2(item, top_dst / item.name)
+                n += 1
+            if n:
+                log.info("  %s.claude/commands/coograph-*.md  %d files", prefix, n)
+                total += n
+
+        # User-authored project-specific commands live under project/.
+        # No coograph commands ship there as of 2026-05-18 — sync still
+        # mirrors the dir for backwards compatibility with older templates.
         src = TEMPLATE_ROOT / ".claude" / "commands" / "project"
-        if src.exists():
-            n = _copy_dir(src, path / ".claude" / "commands" / "project")
-            log.info("  .claude/commands/project  %d files", n)
+        if src.exists() and any(src.iterdir()):
+            n = _copy_dir(src, path / ".claude" / "commands" / "project", dry_run=dry_run)
+            log.info("  %s.claude/commands/project  %d files", prefix, n)
             total += n
 
         # Claude Code lifecycle hooks (block generated files, log bash, etc.)
         hooks_src = TEMPLATE_ROOT / ".claude" / "hooks"
         if hooks_src.exists():
-            n = _copy_dir(hooks_src, path / ".claude" / "hooks")
-            log.info("  .claude/hooks  %d files", n)
+            n = _copy_dir(hooks_src, path / ".claude" / "hooks", dry_run=dry_run)
+            log.info("  %s.claude/hooks  %d files", prefix, n)
             total += n
 
         # Committed settings.json wires the hooks. Downstream users put
         # personal overrides in settings.local.json (not synced).
         settings_src = TEMPLATE_ROOT / ".claude" / "settings.json"
         if settings_src.exists():
-            shutil.copy2(settings_src, path / ".claude" / "settings.json")
-            log.info("  .claude/settings.json  1 file")
+            if not dry_run:
+                shutil.copy2(settings_src, path / ".claude" / "settings.json")
+            log.info("  %s.claude/settings.json  1 file", prefix)
             total += 1
 
-    # VS Code Copilot files
+    # VS Code Copilot files (skills handled by always-copy block above)
     if "vscode" in tools:
-        for subdir in ("agents", "skills", "prompts", "instructions"):
+        for subdir in ("agents", "prompts", "instructions"):
             src = TEMPLATE_ROOT / ".github" / subdir
             if src.exists():
-                n = _copy_dir(src, path / ".github" / subdir)
-                log.info("  .github/%s  %d files", subdir, n)
+                n = _copy_dir(src, path / ".github" / subdir, dry_run=dry_run)
+                log.info("  %s.github/%s  %d files", prefix, subdir, n)
                 total += n
         agents_md = TEMPLATE_ROOT / "AGENTS.md"
         if agents_md.exists():
-            shutil.copy2(agents_md, path / "AGENTS.md")
-            log.info("  AGENTS.md  1 file")
+            if not dry_run:
+                shutil.copy2(agents_md, path / "AGENTS.md")
+            log.info("  %sAGENTS.md  1 file", prefix)
             total += 1
 
     # Code graph server + parsers + MCP config
     if code_graph:
         src = TEMPLATE_ROOT / ".github" / "code-graph"
         if src.exists():
-            n = _copy_dir(src, path / ".github" / "code-graph")
-            log.info("  .github/code-graph  %d files", n)
+            n = _copy_dir(src, path / ".github" / "code-graph", dry_run=dry_run)
+            log.info("  %s.github/code-graph  %d files", prefix, n)
             total += n
 
         mcp_src = TEMPLATE_ROOT / ".mcp.json"
         if mcp_src.exists():
-            shutil.copy2(mcp_src, path / ".mcp.json")
-            log.info("  .mcp.json  1 file")
+            if not dry_run:
+                shutil.copy2(mcp_src, path / ".mcp.json")
+            log.info("  %s.mcp.json  1 file", prefix)
             total += 1
     elif (path / ".github" / "code-graph").exists():
         log.warning("  code_graph is false but %s has .github/code-graph/ "
                      "- set code_graph: true in projects.json to sync updates", path)
 
-    log.info("SYNC %s - %d files updated", path, total)
+    # Remove paths that previous template versions placed but have since
+    # been renamed / removed. See OBSOLETE_PATHS at the top of the module.
+    obsolete = _cleanup_obsolete(path, dry_run=dry_run)
 
-    # Rebuild graph + regenerate visualizer
-    if code_graph:
+    log.info("%sSYNC %s - %d files updated, %d obsolete removed",
+             prefix, path, total, obsolete)
+
+    # Rebuild graph + regenerate visualizer (skipped on dry-run)
+    if code_graph and not dry_run:
         _rebuild_graph(path)
 
     return True
@@ -275,7 +359,12 @@ def _ensure_hooks() -> None:
 
 
 def main() -> None:
-    _ensure_hooks()
+    dry_run = "--dry-run" in sys.argv
+    if dry_run:
+        log.info("=== DRY-RUN: no files will be written or removed ===")
+
+    if not dry_run:
+        _ensure_hooks()
 
     if not PROJECTS_FILE.exists():
         log.info("projects.json not found - no projects registered.")
@@ -297,7 +386,7 @@ def main() -> None:
     ok = 0
     for p in projects:
         log.info("=> %s", p.get("path", "(no path)"))
-        if sync_project(p):
+        if sync_project(p, dry_run=dry_run):
             ok += 1
 
     log.info("Sync complete: %d/%d project(s) updated in %.2fs",

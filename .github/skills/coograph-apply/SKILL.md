@@ -1,5 +1,5 @@
 ---
-name: openspec-apply
+name: coograph-apply
 description: Implement tasks from an OpenSpec change. Use when the user wants to start or continue implementing a proposed change.
 argument-hint: Change name or slug (e.g., "add-dark-mode"). If omitted, will prompt for selection.
 license: MIT
@@ -63,7 +63,7 @@ Fix any failures before proceeding.
 
 ## Step 6: Review gate (standard changes only)
 
-Invoke `@Reviewer` (VS Code) or run `/project:review` (Claude Code).
+Invoke `@Reviewer` (VS Code) or run `/coograph-review` (Claude Code).
 
 - If **REQUEST_CHANGES**: add findings as new tasks under a "Review Fixes" heading in `tasks.md`. Implement fixes, then re-review changed files only.
 - **Circuit breaker**: after 3 review cycles on the same area, STOP and ask the user.
@@ -89,7 +89,7 @@ If commands are not documented, ask the user.
 - [x] Task 1
 - [x] Task 2
 
-All tasks complete. Ready to archive — run openspec-archive.
+All tasks complete. Ready to archive — run coograph-archive.
 ```
 
 If paused:
