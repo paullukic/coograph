@@ -24,6 +24,7 @@ Ships a structured workflow, specialized agents with anti-hallucination guardrai
 ## Contents
 
 - [Quick Start](#quick-start)
+- [Codex CLI Notes](#codex-cli-notes)
 - [What's Inside](#whats-inside)
 - [How it compares](#how-it-compares)
 - [Workflow](#workflow)
@@ -43,7 +44,7 @@ Trigger the initializer in your AI tool's chat. Each tool has its own invocation
 |---|---|---|
 | **Claude Code** | `/coograph-init` | `.claude/commands/coograph-init.md` |
 | **VS Code Copilot** | `/coograph-init` | `.github/skills/coograph-init/` skill folder |
-| **Codex CLI** | `$coograph-init` (explicit skill) **or** "initialize the project" (auto-trigger) | `.agents/skills/coograph-init/SKILL.md` (Codex scans repo root). Codex reserves `/` for built-ins, so custom workflows use `$name` |
+| **Codex CLI** | `$coograph-init` (explicit skill) **or** "initialize the project" (auto-trigger) — see [Codex CLI Notes](#codex-cli-notes) | `.agents/skills/coograph-init/SKILL.md` (Codex scans repo root). Codex reserves `/` for built-ins, so custom workflows use `$name` |
 | **OpenCode** | `/coograph-init` | `.opencode/commands/coograph-init.md` |
 | **Cursor** | `/coograph-init` (string match — no autocomplete) | `.cursor/rules/coograph.mdc` § Invocation |
 | **Windsurf** | `/coograph-init` (string match) | `.windsurfrules` § Invocation |
@@ -55,6 +56,35 @@ Natural-language paraphrases ("initialize the project", "set up coograph", "wire
 The initializer prompts which tools to set up (multi-select), detects your stack, fills all `_TBD_` placeholders, and optionally sets up the code-graph. About 2 minutes.
 
 Manual setup: see [SETUP.md](SETUP.md). Prerequisites and visualizer: see [.github/code-graph/README.md](.github/code-graph/README.md).
+
+## Codex CLI Notes
+
+Codex CLI registers custom workflows differently from the other seven supported tools. If you use Codex, skim this once.
+
+### Slash is reserved
+
+Codex reserves `/` for ~30 built-in commands. Typing `/coograph-init` returns `Unrecognized command`. Use one of:
+
+- **`$coograph-init`** — explicit `$skill-name` invocation.
+- **`/skills`** — built-in command that lists every installed skill. Useful to verify Coograph is loaded.
+- **Natural language** — `"initialize the project"`, `"set up coograph"`, `"wire up coograph in this repo"`. Codex matches against the skill description and auto-activates.
+
+### Where Codex looks for skills
+
+Codex scans these directories in priority order ([source](https://developers.openai.com/codex/skills)):
+
+1. `$CWD/.agents/skills`
+2. Parent directories' `.agents/skills`
+3. `$REPO_ROOT/.agents/skills`
+4. `$HOME/.agents/skills`
+5. `/etc/codex/skills`
+6. Built-in system skills
+
+Coograph ships `.agents/skills/coograph-init/SKILL.md` at the repo root, so step 3 finds it from anywhere inside the project.
+
+### Verify the skill loaded
+
+Run `/skills` in a Codex session. If `coograph-init` is missing, either your Codex build is too old for skills, or the project's `.agents/skills/` folder is gone — re-run `/coograph-init` from another supported tool to restore it.
 
 ## What's Inside
 
