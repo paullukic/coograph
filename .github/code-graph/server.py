@@ -115,8 +115,13 @@ def _conn() -> sqlite3.Connection:
     return sqlite3.connect(DB_PATH)
 
 
-def _impact_radius_internal(files: list[str]) -> tuple[list[str], int]:
-    """BFS through reverse import edges. Returns (sorted affected_files, blast_radius)."""
+def _impact_radius_internal(files: list[str]) -> tuple[list[str], int, dict[str, int]]:
+    """BFS through reverse import edges.
+
+    Returns (sorted affected_files, blast_radius, distances) where distances
+    maps each affected file to its BFS depth from the nearest seed file
+    (seeds are 0, direct dependents 1, and so on).
+    """
     conn = _conn()
 
     seeds: set[str] = set()
@@ -128,25 +133,38 @@ def _impact_radius_internal(files: list[str]) -> tuple[list[str], int]:
             seeds.add(row[0])
 
     visited: set[str] = set(seeds)
-    queue: list[str] = list(seeds)
+    queue: list[tuple[str, int]] = [(s, 0) for s in seeds]
     affected: set[str] = set(files)
+    distances: dict[str, int] = {f: 0 for f in files}
 
     while queue:
-        node_id = queue.pop(0)
+        node_id, depth = queue.pop(0)
         for (dep_id,) in conn.execute(
             "SELECT src FROM edges WHERE dst=? AND kind='depends_on'", (node_id,)
         ):
             if dep_id not in visited:
                 visited.add(dep_id)
-                queue.append(dep_id)
+                queue.append((dep_id, depth + 1))
                 row = conn.execute(
                     "SELECT file FROM nodes WHERE id=?", (dep_id,)
                 ).fetchone()
                 if row:
                     affected.add(row[0])
+                    distances.setdefault(row[0], depth + 1)
 
     conn.close()
-    return sorted(affected), len(affected)
+    return sorted(affected), len(affected), distances
+
+
+def _approx_tokens(rel_path: str) -> int:
+    """Approximate token count for a repo-relative file: size_bytes // 4.
+
+    Same convention as the coograph bench harness. Missing files count as 0.
+    """
+    try:
+        return (ROOT / rel_path).stat().st_size // 4
+    except OSError:
+        return 0
 
 
 def _risk_score_file(conn: sqlite3.Connection, file: str) -> float:
@@ -154,7 +172,7 @@ def _risk_score_file(conn: sqlite3.Connection, file: str) -> float:
     risk = 0.0
 
     # Blast radius contribution (capped at 0.3)
-    _, radius = _impact_radius_internal([file])
+    _, radius, _ = _impact_radius_internal([file])
     risk += min((radius - 1) * 0.05, 0.3)
 
     # Test gap (0.3 if no test covers this file)
@@ -301,24 +319,34 @@ def get_impact_radius(files: list[str]) -> dict:
 
     Traverses the import graph in reverse to find all dependents.
     Use this at review time to know the full surface area of a change.
+    Each affected file's BFS distance from the nearest seed is reported in
+    distances (seeds are 0, direct dependents 1, ...).
     """
-    affected, radius = _impact_radius_internal(files)
+    affected, radius, distances = _impact_radius_internal(files)
     return {
         "seed_files":    files,
         "affected_files": affected,
         "blast_radius":  radius,
+        "distances":     distances,
     }
 
 
 @mcp.tool()
-def get_review_context(files: list[str]) -> dict:
-    """Return the minimal, focused file set needed to review a change.
+def get_review_context(files: list[str], budget_tokens: int | None = None) -> dict:
+    """Return a ranked, token-estimated file set for reviewing a change.
 
-    Combines blast radius with related test files.
-    Call this FIRST at the start of any review — use files_to_read
-    to scope which files the reviewer should actually read.
+    files_to_read is ranked by relevance: the changed files first, then
+    affected files by BFS distance (ascending) and risk score (descending),
+    then related test files. Every entry carries an approximate token count
+    (file bytes / 4) in approx_tokens; estimated_tokens is the total.
+
+    Pass budget_tokens to cap the read list: the longest ranked prefix that
+    fits is returned (changed files are always kept), truncated is set, and
+    files_omitted lists what was cut so you can pull more explicitly.
+
+    Call this FIRST at the start of any review — read files_to_read in order.
     """
-    affected, radius = _impact_radius_internal(files)
+    affected, radius, distances = _impact_radius_internal(files)
 
     conn = _conn()
     test_files: set[str] = set()
@@ -335,15 +363,65 @@ def get_review_context(files: list[str]) -> dict:
                 ).fetchone()
                 if trow:
                     test_files.add(trow[0])
+
+    seeds = list(dict.fromkeys(files))
+    seed_set = set(seeds)
+    dependents = [f for f in affected if f not in seed_set]
+
+    # Risk-score at most 50 dependents (perf guard); pick deterministically:
+    # nearest first, then path. Unscored files rank as risk 0.0.
+    score_order = sorted(dependents, key=lambda f: (distances.get(f, 1 << 30), f))
+    risks = {f: _risk_score_file(conn, f) for f in score_order[:50]}
     conn.close()
 
-    files_to_read = sorted(set(files) | set(affected))
+    tokens: dict[str, int] = {}
+    for f in seeds + dependents + sorted(test_files):
+        if f not in tokens:
+            tokens[f] = _approx_tokens(f)
+
+    # Rank within the affected tier: distance asc, deleted-on-disk last,
+    # risk desc, path asc.
+    dependents.sort(key=lambda f: (
+        distances.get(f, 1 << 30),
+        1 if tokens[f] == 0 else 0,
+        -risks.get(f, 0.0),
+        f,
+    ))
+    listed = seed_set | set(dependents)
+    tests_tail = sorted(t for t in test_files if t not in listed)
+    ranked = seeds + dependents + tests_tail
+
+    truncated = False
+    files_omitted: list[str] = []
+    if budget_tokens is not None:
+        seed_cost = sum(tokens[f] for f in seeds)
+        kept = list(seeds)
+        used = seed_cost
+        rest = ranked[len(seeds):]
+        cut_idx = len(rest)
+        for i, f in enumerate(rest):
+            if used + tokens[f] > budget_tokens:
+                cut_idx = i
+                break
+            kept.append(f)
+            used += tokens[f]
+        if cut_idx < len(rest):
+            truncated = True
+            files_omitted = rest[cut_idx:]
+        if seed_cost > budget_tokens:
+            truncated = True
+        ranked = kept
+
     return {
         "changed_files":  files,
-        "files_to_read":  files_to_read,
+        "files_to_read":  ranked,
+        "approx_tokens":  {f: tokens[f] for f in ranked},
+        "estimated_tokens": sum(tokens[f] for f in ranked),
         "related_tests":  sorted(test_files),
-        "total_files":    len(files_to_read),
+        "total_files":    len(ranked),
         "blast_radius":   radius,
+        "truncated":      truncated,
+        "files_omitted":  files_omitted,
     }
 
 
@@ -413,8 +491,10 @@ def query_graph(pattern: str, node_name: str) -> list[dict]:
             "SELECT id FROM nodes WHERE file=? AND kind='file'", (node_name,)
         ).fetchone()
         if row:
+            # imports edges keep the raw import string as dst; the resolved
+            # file->file relation lives in depends_on edges.
             for (src_id,) in conn.execute(
-                "SELECT src FROM edges WHERE dst=? AND kind='imports'", (row[0],)
+                "SELECT src FROM edges WHERE dst=? AND kind='depends_on'", (row[0],)
             ):
                 srow = conn.execute(
                     "SELECT file FROM nodes WHERE id=?", (src_id,)
@@ -475,7 +555,7 @@ def get_minimal_context(task: str = "") -> dict:
     else:
         total_radius = 0
         for f in changed[:20]:
-            _, r = _impact_radius_internal([f])
+            _, r, _ = _impact_radius_internal([f])
             total_radius += r
         if total_radius > 20:
             risk = "high"

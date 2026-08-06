@@ -90,10 +90,10 @@ python .github/code-graph/server.py
 |------|-------------|
 | `build_graph` | Full rebuild of the graph |
 | `update_graph` | Incremental update (changed files only) |
-| `graph_stats` | Node/edge counts, stacks, top-connected files |
-| `detect_changes` | Find changed files vs a git ref |
-| `get_impact_radius` | Blast radius analysis for a set of files |
-| `get_review_context` | Focused file set + risk scores for code review |
+| `graph_stats` | Node/edge/file/function/test-file counts + DB path |
+| `detect_changes` | Find changed files vs a git ref, with per-file risk scores |
+| `get_impact_radius` | Blast radius analysis for a set of files, with per-file BFS distance |
+| `get_review_context` | Ranked review file set with token estimates; optional `budget_tokens` cap |
 | `query_graph` | Flexible queries: importers, dependencies, calls, tests |
 | `get_minimal_context` | Quick health check + task-relevant risk assessment |
 | `find_large_functions` | Find functions/methods exceeding a line threshold |
