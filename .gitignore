@@ -39,6 +39,14 @@ Thumbs.db
 # Codespaces dev container
 !.devcontainer/
 !.devcontainer/**
+# Generated Claude plugin (.github/scripts/build-plugin.py). plugin/template/
+# mirrors repo paths that the rules above and the global excludesfile would drop.
+!plugin/
+!plugin/**
+plugin/**/__pycache__/
+plugin/**/node_modules/
+# Cowork upload package (build-plugin.py --zip)
+/dist/
 
 # Per-project bash audit log (written by .claude/hooks/log-bash.py,
 # .codex/hooks/log-bash.py, and .opencode/plugin/log-bash.ts — all
