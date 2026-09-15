@@ -7,7 +7,7 @@ Parses your repository into a SQLite graph (`.code-graph/graph.db`) that AI tool
 ## Requirements
 
 - **Python 3.10+**
-- **`mcp>=1.0.0`** (MCP server only — not needed for `--build`/`--update`)
+- **`mcp>=1.0.0,<2`** (MCP server only — not needed for `--build`/`--update`; SDK 2.x renamed `mcp.server.fastmcp` and is not supported yet)
 - **`uv`** (recommended — auto-installs dependencies)
 - **`tree-sitter` + language packages** (optional but recommended — see `requirements.txt` for the full list; uninstalled languages fall back to regex parsers automatically)
 
@@ -50,7 +50,7 @@ Outputs `.code-graph/graph.html`. Requires `node_modules/` (run `npm install` in
 uv run --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py
 
 # With pip:
-pip install "mcp>=1.0.0"
+pip install "mcp>=1.0.0,<2"
 python .github/code-graph/server.py
 ```
 

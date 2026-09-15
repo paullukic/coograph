@@ -1,4 +1,5 @@
-mcp>=1.0.0
+# MCP SDK 2.x renamed mcp.server.fastmcp -> mcp.server.mcpserver; server.py targets 1.x
+mcp>=1.0.0,<2
 
 # Tree-sitter: accurate AST parsing (replaces regex parsers where installed)
 # Install the languages you need — uninstalled ones fall back to regex parsers

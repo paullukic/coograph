@@ -8,9 +8,9 @@ Usage:
     python server.py --build      # build/rebuild graph then exit
 
 Requirements:
-    pip install "mcp>=1.0.0"
+    pip install "mcp>=1.0.0,<2"
     — or with uv (auto-installs) —
-    uv run --with "mcp>=1.0.0" server.py
+    uv run --with "mcp>=1.0.0,<2" server.py
 """
 
 from __future__ import annotations
@@ -92,11 +92,14 @@ import sqlite3
 
 try:
     from mcp.server.fastmcp import FastMCP
-except ImportError:
+except ImportError as e:
+    # Also raised by MCP SDK 2.x, which renamed mcp.server.fastmcp. Surface the
+    # real error instead of assuming the package is absent.
     sys.exit(
-        "mcp package not found.\n"
-        "  Install: pip install 'mcp>=1.0.0'\n"
-        "  Or run:  uv run --with 'mcp>=1.0.0' .github/code-graph/server.py"
+        f"Cannot import mcp.server.fastmcp: {e}\n"
+        "  Install: pip install 'mcp>=1.0.0,<2'\n"
+        "  Or run:  uv run --with-requirements .github/code-graph/requirements.txt "
+        ".github/code-graph/server.py"
     )
 
 mcp = FastMCP("code-graph")
