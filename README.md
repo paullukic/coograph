@@ -24,6 +24,7 @@ Ships a structured workflow, specialized agents with anti-hallucination guardrai
 ## Contents
 
 - [Quick Start](#quick-start)
+- [Claude Plugin](#claude-plugin)
 - [Codex CLI Notes](#codex-cli-notes)
 - [What's Inside](#whats-inside)
 - [How it compares](#how-it-compares)
@@ -56,6 +57,22 @@ Natural-language paraphrases ("initialize the project", "set up coograph", "wire
 The initializer prompts which tools to set up (multi-select), detects your stack, fills all `_TBD_` placeholders, and optionally sets up the code-graph. About 2 minutes.
 
 Manual setup: see [SETUP.md](SETUP.md). Prerequisites and visualizer: see [.github/code-graph/README.md](.github/code-graph/README.md).
+
+## Claude Plugin
+
+Coograph also ships as a Claude plugin for **Claude Code** and **Claude Cowork**: 12 skills, 5 agents, and the guardrail hooks in one install. This repo is its own plugin marketplace.
+
+| Host | Install |
+|---|---|
+| **Claude Code** | `/plugin marketplace add paullukic/coograph`, then `/plugin install coograph@coograph` |
+| **Claude Cowork** | **Customize → Plugins → Add marketplace** → `paullukic/coograph` → **Install**. Or upload `dist/coograph.plugin` from the Plugins page (build it with `python .github/scripts/build-plugin.py --zip`). |
+
+- Plugin skills are namespaced: `/coograph:coograph-init`, `/coograph:coograph-review`, and so on. Run `/coograph:coograph-init` in a project folder to scaffold it. Templates are bundled in the plugin, so no coograph checkout is needed.
+- Marketplace **Update** refreshes the plugin's own skills, agents, and hooks. Files coograph-init copied into a project (instructions, `.claude/hooks/`, `.github/code-graph/`, MCP config) are not synced for plugin installs: re-run `/coograph:coograph-init` to refresh them.
+- Plugin hooks act only in projects set up with coograph-init. When a project also wires its own `.claude/hooks/` copies, each event is handled by exactly one copy, so nothing fires twice and nothing goes silent on hosts that skip project settings.
+- The code-graph MCP server stays per-project (init writes the MCP config). Cowork loads connectors from **Customize**, so expect Cowork sessions to fall back to `sqlite3` and grep for graph queries.
+
+**Maintainers:** `plugin/` and `.claude-plugin/marketplace.json` are generated. After changing `.github/skills/`, `.github/agents/`, `.claude/commands/`, `.claude/hooks/`, or any file coograph-init copies, run `python .github/scripts/build-plugin.py` and commit the result. `--check` exits 1 when the committed output is stale. Bump `VERSION` in the script on every release: hosts cache plugins per version.
 
 ## Codex CLI Notes
 
