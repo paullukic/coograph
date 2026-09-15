@@ -15,6 +15,13 @@ import sys
 import time
 from pathlib import Path
 
+sys.dont_write_bytecode = True  # keep __pycache__/ out of .claude/hooks/
+try:
+    from _coograph_guard import should_skip
+except ImportError:  # guard not copied next to this hook: run unguarded
+    def should_skip(payload: dict, hook_file: str) -> bool:
+        return False
+
 
 def _format_age(seconds: float) -> str:
     if seconds < 60:
@@ -31,6 +38,9 @@ def main() -> int:
         payload = json.loads(sys.stdin.read() or "{}")
     except json.JSONDecodeError:
         payload = {}
+
+    if should_skip(payload, __file__):
+        return 0
 
     cwd = Path(payload.get("cwd") or ".")
     db = cwd / ".code-graph" / "graph.db"

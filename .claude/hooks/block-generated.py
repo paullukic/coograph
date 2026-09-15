@@ -13,6 +13,13 @@ import json
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True  # keep __pycache__/ out of .claude/hooks/
+try:
+    from _coograph_guard import should_skip
+except ImportError:  # guard not copied next to this hook: run unguarded
+    def should_skip(payload: dict, hook_file: str) -> bool:
+        return False
+
 BLOCKED_SEGMENTS = {
     "generated",
     "__generated__",
@@ -69,6 +76,9 @@ def main() -> int:
         return 0
 
     if payload.get("tool_name") not in {"Edit", "Write", "MultiEdit", "NotebookEdit"}:
+        return 0
+
+    if should_skip(payload, __file__):
         return 0
 
     raw = _extract_path(payload)

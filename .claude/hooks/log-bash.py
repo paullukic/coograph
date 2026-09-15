@@ -29,6 +29,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+sys.dont_write_bytecode = True  # keep __pycache__/ out of .claude/hooks/
+try:
+    from _coograph_guard import should_skip
+except ImportError:  # guard not copied next to this hook: run unguarded
+    def should_skip(payload: dict, hook_file: str) -> bool:
+        return False
+
 AGENT = "claude-code"
 
 
@@ -39,6 +46,9 @@ def main() -> int:
         return 0
 
     if payload.get("tool_name") != "Bash":
+        return 0
+
+    if should_skip(payload, __file__):
         return 0
 
     command = (payload.get("tool_input") or {}).get("command", "")
