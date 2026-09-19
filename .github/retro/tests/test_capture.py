@@ -65,8 +65,14 @@ class StoreTests(unittest.TestCase):
         self.assertNotIn("watch", program + digest)
 
     def test_rel_path_external(self) -> None:
+        # Windows drive and UNC paths are external on every host, including a
+        # POSIX machine reading transcripts copied from Windows.
         self.assertEqual(sig.rel_path(self.root, r"C:\Users\someone\notes.md"), "external")
+        self.assertEqual(sig.rel_path(self.root, "D:/other/notes.md"), "external")
+        self.assertEqual(sig.rel_path(self.root, r"\\server\share\x.ts"), "external")
         self.assertEqual(sig.rel_path(self.root, "/etc/passwd"), "external")
+        # Relative paths with backslashes come out in POSIX form on every host.
+        self.assertEqual(sig.rel_path(self.root, r"src\b.ts"), "src/b.ts")
         inside = self.root / "src" / "a.ts"
         self.assertEqual(sig.rel_path(self.root, str(inside)), "src/a.ts")
         self.assertEqual(sig.rel_path(self.root, "src/b.ts"), "src/b.ts")
