@@ -10,6 +10,7 @@ Thumbs.db
 .vscode/
 *.iml
 **/__pycache__/
+openspec
 
 # Environment
 .env
@@ -22,7 +23,6 @@ Thumbs.db
 !.github/code-graph/
 !AGENTS.md
 !.mcp.json
-!openspec/
 # Per-tool native config dirs at repo root
 !.agents/
 !.agents/**
