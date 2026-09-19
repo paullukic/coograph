@@ -1,0 +1,15 @@
+# Pre-commit hooks for the Coograph template repo.
+# Install once:  pre-commit install
+# Run manually:  pre-commit run --all-files
+#
+# Issue #6 will extend this with markdownlint / lychee / SKILL frontmatter format.
+# For now it carries the cross-tool invocation drift check (issue #2).
+repos:
+  - repo: local
+    hooks:
+      - id: check-invocations
+        name: cross-tool invocation drift check
+        entry: python .github/scripts/check-invocations.py
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -1,0 +1,25 @@
+schema: spec-driven
+
+# Project context (recommended)
+# This is injected into every artifact generation — proposals, designs, and tasks
+# will all be grounded in your actual stack and conventions.
+# Fill this in when setting up the project for much better AI-generated artifacts.
+#
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js, Prisma
+#     We use conventional commits and trunk-based development
+#     Domain: e-commerce platform with multi-tenant architecture
+#     Key conventions: All API routes under /api/v1, Zod for validation,
+#     TanStack Query for data fetching, next-intl for i18n
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+#       - Each task must have clear acceptance criteria

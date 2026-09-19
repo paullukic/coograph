@@ -1,0 +1,18 @@
+name: checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  invocation-drift:
+    name: cross-tool invocation drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Run invocation drift check
+        run: python .github/scripts/check-invocations.py

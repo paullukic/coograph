@@ -10,6 +10,16 @@ metadata:
 
 Initialize a new project with this Coograph template. Auto-detect the tech stack from the target repo and fill in all template placeholders.
 
+## Template source
+
+Every "copy" instruction below copies from the **template root**. Resolve it once, before Step 1:
+
+- **Repo mode** — this file is at `<coograph>/.github/skills/coograph-init/SKILL.md` inside a coograph checkout. Template root = `<coograph>`.
+- **Plugin mode** — this file is at `<plugin>/skills/coograph-init/SKILL.md` and `<plugin>/template/` exists (Claude Code or Cowork plugin install). Template root = `<plugin>/template/`. There is no coograph checkout and no `projects.json`: detect install state from files on disk and skip Step 8. Marketplace **Update** refreshes only the plugin's own skills, agents, and hooks; files this procedure copies into the project do not auto-update, so tell the user to re-run init to refresh them.
+- **Initialized-project mode** — this file is at `<project>/.github/skills/coograph-init/SKILL.md` in a project that was itself initialized (no `templates/` or `setup.sh` next to it). Template root = `<project>`. Per-tool files under `templates/` (Cursor, Windsurf, Aider, Cline) are unavailable here: if the user selects one of those tools, say so and point them to the plugin or a coograph checkout. Skip Step 8.
+
+The template root mirrors the coograph repo layout (`.github/…`, `.claude/…`, `templates/…`), so every path below resolves the same way in every mode.
+
 ---
 
 ## Step 1: Gather Info
@@ -32,12 +42,16 @@ Ask the user these questions one at a time (wait for each answer before proceedi
   - Ask for concise bullets (for example: mandatory architecture patterns, domain invariants, naming restrictions, module boundaries, logging/security constraints).
 5. **Enable standalone code-graph?**
    - Options: `yes` (recommended for projects with 10+ files), `no`
-   - When enabled a minimal Python MCP server is shipped inside the project at `.github/code-graph/` and wired into the AI tool(s) selected in question 2 — no external package install required beyond `mcp>=1.0.0`.
+   - When enabled a minimal Python MCP server is shipped inside the project at `.github/code-graph/` and wired into the AI tool(s) selected in question 2 — no external package install required beyond `mcp>=1.0.0,<2`.
    - Requires Python 3.10+. `uv` is recommended (auto-installs deps); `pip` works too.
 6. **For local-only generated folders, add entries to global git ignore?**
   - Ask this only if Step 1 question 5 is `yes`.
   - Options: `yes`, `no`
   - If `yes`, ask for additional paths (optional). Include `.code-graph/` by default.
+7. **Enable Retro (self-tuning guardrails)?**
+   - Options: `yes` (recommended), `no`
+   - Explain in two lines: "Retro records when the agent breaks a project rule (grep before the code graph, edits outside the approved change, hand-edits to generated files, new dependencies) and what each session costs in tokens, then proposes fixes to the instruction files and hooks as an OpenSpec you approve. It stores tool names, counts, and paths only; no prompt text, code, or output, and nothing leaves the machine."
+   - Capture needs Claude Code (transcripts and lifecycle hooks). Other tools get the analyzer and the `/coograph-retro` skill, but no capture. Say this if Claude Code was not selected in question 2.
 
 ## Step 1b: Detect Install State (idempotent re-init)
 
@@ -115,19 +129,19 @@ Present findings in a summary table and ask the user to confirm or correct befor
 
 ## Step 3: Copy Template Files
 
-Copy files from the coograph repo to the target project. Only copy what's relevant to the tools selected in Step 1.
+Copy files from the template root (see Template source) to the target project. Only copy what's relevant to the tools selected in Step 1.
 
 **Always copy (shared conventions used by every tool):**
 - `.github/copilot-instructions.md` (CLAUDE.md pre-flight + on-demand reads depend on this)
 - `.github/instructions/` (all instruction `.md` files — testing, styling, brutal-honesty)
 - `.github/skills/` (all skill directories — every supported tool delegates here, including the Claude Code command wrappers in `.claude/commands/` and the multi-tool slash registrations under `templates/`)
 - `openspec/config.yaml` (create `openspec/` dir if needed)
+- `.github/retro/` (`retro.py`, `_coograph_signals.py`, `rules.seed.json`, `README.md`; never `tests/`, never `rules.json`). Always, whatever the answer to Step 1 question 7: the analyzer and the `/coograph-retro` skill must be able to bootstrap later. Only when question 7 is `yes`, also create the live registry: `cd <target> && python3 .github/retro/retro.py --merge-seed` (creates `rules.json` from `rules.seed.json`, or adds new seeded rules to an existing one without touching local edits). Never copy `rules.json` from the template root; it is the coograph repo's own live registry.
 
 **For Claude Code:**
 - `CLAUDE.md`
-- `.claude/commands/project/` (all command files)
-- `.claude/commands/coograph-init.md` (the `/coograph-init` slash command itself, so the project can re-init others)
-- `.claude/hooks/` (all hook scripts — block-generated, log-bash, report-graph, warn-scope)
+- `.claude/commands/coograph-*.md` (every Coograph slash command: `/coograph-init` itself, so the project can re-init others, plus `/coograph-new-ticket`, `/coograph-plan`, `/coograph-review`, `/coograph-verify`, `/coograph-debug`, `/coograph-search`, `/coograph-retro`, which the copied `CLAUDE.md` references)
+- `.claude/hooks/` (all hook scripts: block-generated, log-bash, report-graph, warn-scope, capture-signals, plus the shared `_coograph_guard.py` module and the `_coograph_signals.py` shim that loads `.github/retro/_coograph_signals.py`)
 - `.claude/settings.json` (wires the hooks into Claude Code lifecycle events)
 - Do NOT copy `.claude/settings.local.json` — that's per-machine personal overrides
 
@@ -143,6 +157,7 @@ Copy files from the coograph repo to the target project. Only copy what's releva
 
 **For OpenCode:**
 - `.opencode/commands/coograph-init.md` (registers `/coograph-init` slash in OpenCode — note the plural `commands/`)
+- `.opencode/commands/coograph-retro.md` (registers `/coograph-retro`)
 - `AGENTS.md` (auto-read by OpenCode; same file as VS Code Copilot — copy once)
 - (delegates to `.github/skills/coograph-init/` — already supplied by the always-copy block)
 
@@ -236,14 +251,14 @@ Run this step only if the user selected `yes` in Step 1 question 5.
 
 ### 6a. Copy server files
 
-Copy `.github/code-graph/` from the coograph to the target project.
+Copy `.github/code-graph/` from the template root to the target project.
 This includes:
 - `builder.py` — parses source files into SQLite
 - `server.py`  — MCP server exposing tools to the AI assistant
 - `visualize.py` — generates standalone HTML graph visualization
 - `parsers/` — per-language parser modules (regex + tree-sitter)
 - `package.json` — d3 dependency for visualization
-- `requirements.txt` — `mcp>=1.0.0` plus optional tree-sitter language packages
+- `requirements.txt` — `mcp>=1.0.0,<2` plus optional tree-sitter language packages
 - `post-commit` / `post-merge` / `post-rewrite` — optional git hooks for automatic graph updates
 
 Do NOT copy `node_modules/` — it will be installed in the next step.
@@ -281,7 +296,7 @@ uv --version
 ```
 
 Do NOT ask the user to install `uv` manually — install it automatically and report the result.
-If the install script fails (e.g. no internet, corporate proxy), fall back to `pip install 'mcp>=1.0.0'` and use `python` instead of `uv` in MCP configs.
+If the install script fails (e.g. no internet, corporate proxy), fall back to `pip install 'mcp>=1.0.0,<2'` and use `python` instead of `uv` in MCP configs.
 
 ### 6d. Add `.code-graph/` to `.gitignore`
 
@@ -424,9 +439,11 @@ Verify it is present in the target project by grepping each agent file for the l
 grep -L "MANDATORY — non-negotiable" <target>/.github/agents/*.agent.md
 ```
 
-Files returned (missing the marker) need the block restored — copy the Step 0 block from the matching file in `coograph/.github/agents/` verbatim. Do not improvise the wording; the literal HARD RULE phrasing is what enforces the rule.
+Files returned (missing the marker) need the block restored — copy the Step 0 block from the matching file in `<template root>/.github/agents/` verbatim. Do not improvise the wording; the literal HARD RULE phrasing is what enforces the rule.
 
-## Step 8: Register in projects.json
+## Step 8: Register in projects.json (repo mode only)
+
+Skip this step in plugin mode and initialized-project mode (see Template source) — there is no coograph checkout to register with.
 
 Register the target project so future `git pull` updates in coograph auto-propagate.
 
@@ -459,14 +476,14 @@ Run these queries against the target project's `.code-graph/graph.db` and collec
 ```bash
 sqlite3 .code-graph/graph.db "SELECT COUNT(*) FROM nodes;"
 sqlite3 .code-graph/graph.db "SELECT COUNT(*) FROM edges;"
-sqlite3 .code-graph/graph.db "SELECT COUNT(DISTINCT file_path) FROM nodes;"
+sqlite3 .code-graph/graph.db "SELECT COUNT(DISTINCT file) FROM nodes;"
 sqlite3 .code-graph/graph.db "SELECT kind, COUNT(*) FROM nodes GROUP BY kind ORDER BY COUNT(*) DESC LIMIT 5;"
 ```
 
 Compare to expectations based on the source tree (Step 2 detection):
 
 - **Source files on disk** (count: `find src/ -type f -name '*.<ext>' | wc -l` or equivalent for the detected language)
-- **Distinct file_path nodes in graph** (from query above)
+- **Distinct `file` values in graph** (from query above)
 
 ### 9b. Detect issues
 
@@ -474,7 +491,7 @@ Flag the graph as suspect if ANY of these are true:
 
 - `nodes` count is 0 or "unrealistically low" (< 50% of source files for projects with 20+ files)
 - `edges` count is 0 (parser produced symbols but no relationships — likely a parser fallback issue)
-- Distinct `file_path` count is < 80% of detected source files (parser silently skipped files)
+- Distinct `file` count is < 80% of detected source files (parser silently skipped files)
 - Top `kind` values are missing expected categories for the language (e.g. Python project with zero `function` or `class` nodes)
 - `graph.db` size is < 10kb (likely empty schema, no real content)
 
@@ -518,6 +535,49 @@ Wait for the user's choice. Do not auto-fix.
    ```
 6. If healthy, output the success line from 9c and continue.
 
+## Step 10: Retro first run (only if Retro enabled)
+
+Run this step only if the user selected `yes` in Step 1 question 7.
+
+### 10a. Verify the files landed
+
+`<target>/.github/retro/rules.json`, `rules.seed.json`, `retro.py`, `_coograph_signals.py`, and `README.md` exist. If Claude Code was selected, `<target>/.claude/hooks/capture-signals.py` and the `_coograph_signals.py` shim exist and `<target>/.claude/settings.json` wires `capture-signals.py` under both `SessionStart` and `SessionEnd`. Run:
+
+```bash
+cd <target> && python3 .github/retro/retro.py --validate
+```
+
+It must print `retro: rules.json valid`.
+
+### 10b. Backfill from existing transcripts (Claude Code only)
+
+Claude Code keeps every transcript for the project under `~/.claude/projects/<slug>/`, where `<slug>` is the absolute target path with every character outside `A-Z a-z 0-9` replaced by `-`:
+
+| OS | example path | slug |
+|---|---|---|
+| Windows | `C:\paul\code\app` | `C--paul-code-app` |
+| macOS / Linux | `/home/paul/app` | `-home-paul-app` |
+
+Work out the directory and count its `*.jsonl` files. If it does not exist or is empty, say so and skip to 10c. Otherwise ask a Yes/No question:
+
+> **Backfill Retro from existing transcripts?** "Found <N> Claude Code transcripts for this project at `<path>`. Retro stores tool names, counts, rule ids, file paths, and token totals only; no prompt text, code, or output. Read them now?"
+
+On yes:
+
+```bash
+cd <target> && python3 .claude/hooks/capture-signals.py --backfill "<path>" --cwd .
+```
+
+Report the printed `captured / skipped / failed` line verbatim.
+
+### 10c. First report
+
+```bash
+cd <target> && python3 .github/retro/retro.py --report
+```
+
+Show the user the first paragraph it prints (the plain-language opener) and the path to `report.md`. If nothing was captured, the opener says so; that is fine. Tell the user: "From now on every Claude Code session start prints a `[retro]` line, and `/coograph-retro` turns the report into proposals when there is enough evidence."
+
 ## Guardrails
 
 - Never guess at commands — if you can't detect them, ask.
@@ -527,3 +587,4 @@ Wait for the user's choice. Do not auto-fix.
 - Prefer what the project already does over generic defaults.
 - Initialization is complete only when there are zero `_TBD_` and `<!-- FILL` markers in copied instruction files.
 - If code-graph setup is enabled, initialization is complete only when `.code-graph/graph.db` exists in the target project, at least one MCP config file has been written, AND Step 9 health check has run (either reporting healthy or finishing the user-chosen fix path).
+- If Retro is enabled, initialization is complete only when `retro.py --validate` passed and Step 10c printed a report opener.

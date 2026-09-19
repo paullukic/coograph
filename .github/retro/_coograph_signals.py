@@ -1,0 +1,568 @@
+"""Shared signal store for Coograph Retro.
+
+This is the one canonical copy, at .github/retro/_coograph_signals.py, so
+the analyzer works in every project that has .github/retro/, whichever AI
+tool the project was set up for. The Claude Code hooks reach it through a
+thin shim at .claude/hooks/_coograph_signals.py that locates this file via
+CLAUDE_PROJECT_DIR (plugin mode) or the hook's own project root.
+
+Every Retro signal lives in one local, gitignored, append-mostly file:
+
+  .coograph/signals.jsonl
+
+One JSON object per line. Records are metadata only: tool names, counts,
+rule ids, repo-relative paths, command hashes, timestamps. Never prompt
+text, code, tool output, or full commands. That property is enforced here
+through a per-detector evidence allow-list, and tested with a sentinel
+transcript in .github/retro/tests/.
+
+Writers:
+  - .claude/hooks/capture-signals.py   (transcript-derived records, origin "transcript")
+  - .claude/hooks/warn-scope.py        (origin "hook")
+  - .claude/hooks/block-generated.py   (origin "hook")
+
+Readers:
+  - .github/retro/retro.py             (analyzer, report, status)
+  - capture-signals.py                 (session-start status line)
+
+Not a hook itself. Imported by the scripts next to it. Every public function
+fails closed on I/O errors: it returns False / None / empty and never raises
+into a hook.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import time
+from datetime import datetime
+from pathlib import Path
+
+SCHEMA_VERSION = 1
+
+SIGNALS_REL = Path(".coograph") / "signals.jsonl"
+LOCK_REL = Path(".coograph") / "signals.lock"
+RULES_REL = Path(".github") / "retro" / "rules.json"
+
+LOCK_WAIT_SECONDS = 2.0
+LOCK_STALE_SECONDS = 60
+LOCK_POLL_SECONDS = 0.05
+PATH_MAX_CHARS = 300
+DEFAULT_MAX_SESSIONS = 500
+
+TOOLS = {"claude-code", "codex", "opencode", "unknown"}
+KINDS = {"session", "violation", "event"}
+ORIGINS = {"transcript", "hook"}
+CONFIDENCES = {"deterministic", "heuristic"}
+ENFORCEMENTS = {"prose", "hook-warn", "hook-block"}
+
+# Evidence keys each detector may write. Anything else is dropped at emit
+# time. This list is the privacy boundary: no key here can hold free text.
+ALLOWED_EVIDENCE: dict[str, set[str]] = {
+    "graph-first": {"count", "first_index", "tools", "proof"},
+    "openspec-gate": {"files", "count"},
+    "scope-warning": {"path", "openspec"},
+    "generated-file-block": {"path", "reason"},
+    "build-retry": {"program", "hash", "runs", "errors"},
+    "user-correction": {"pattern", "after_tool"},
+    "new-dependency": {"program", "manifest", "via"},
+    "session": {
+        "message_count", "tools_used", "tool_calls_total", "edited_files",
+        "skills_invoked", "graph_db_present", "started", "ended", "usage",
+        "source_bytes",
+    },
+}
+
+REQUIRED_THRESHOLDS = {
+    "deterministic_events", "deterministic_sessions",
+    "heuristic_events", "heuristic_sessions",
+    "prune_sessions", "instruction_token_budget", "retro_prompt_min_sessions",
+    "bootstrap_min_archives",
+}
+DEFAULT_BOOTSTRAP_MIN_ARCHIVES = 10
+
+_SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
+
+def now_iso() -> str:
+    return datetime.now().replace(microsecond=0).isoformat()
+
+
+def safe_session_id(raw: object) -> str:
+    cleaned = _SAFE_ID_RE.sub("", str(raw or ""))[:64]
+    return cleaned or "unknown"
+
+
+def rel_path(cwd: Path, raw: object) -> str:
+    """Repo-relative POSIX path, or the literal 'external' when outside cwd.
+
+    Absolute paths can carry usernames; they never reach the signals file.
+    """
+    if not raw:
+        return "external"
+    text = str(raw).strip()
+    if not text:
+        return "external"
+    try:
+        candidate = Path(text)
+        base = Path(cwd).resolve()
+        # On Windows Path("/etc/passwd").is_absolute() is False; treat any
+        # leading slash as absolute so it resolves against the drive root
+        # and lands outside cwd. Relative paths resolve against cwd so that
+        # "../up.ts" lands outside too.
+        if candidate.is_absolute() or text.startswith(("/", "\\")):
+            full = candidate.resolve()
+        else:
+            full = (base / candidate).resolve()
+        rel = full.relative_to(base).as_posix()
+        return rel[:PATH_MAX_CHARS] or "external"
+    except (ValueError, OSError, RuntimeError):
+        return "external"
+
+
+def command_identity(command: object) -> tuple[str, str]:
+    """(program, 12-char sha1) for a shell command. Program only, never args."""
+    text = str(command or "").strip()
+    if not text:
+        return "", ""
+    digest = hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:12]
+    first = text.split()[0] if text.split() else ""
+    # "C:\\path\\python.exe" or "/usr/bin/npm" -> basename only.
+    program = first.replace("\\", "/").rsplit("/", 1)[-1][:40]
+    return program, digest
+
+
+def make_record(
+    *,
+    tool: str,
+    session_id: str,
+    kind: str,
+    rule: str,
+    detector: str,
+    confidence: str,
+    evidence: dict,
+    origin: str,
+    ts: str | None = None,
+) -> dict | None:
+    """Build a schema-valid record or None. Drops evidence keys not allowed."""
+    if kind not in KINDS or confidence not in CONFIDENCES or origin not in ORIGINS:
+        return None
+    allowed = ALLOWED_EVIDENCE.get(detector)
+    if allowed is None:
+        return None
+    clean = {k: v for k, v in (evidence or {}).items() if k in allowed}
+    return {
+        "v": SCHEMA_VERSION,
+        "ts": ts or now_iso(),
+        "tool": tool if tool in TOOLS else "unknown",
+        "session_id": safe_session_id(session_id),
+        "kind": kind,
+        "rule": rule or "none",
+        "detector": detector,
+        "confidence": confidence,
+        "origin": origin,
+        "evidence": clean,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
+def validate_rules(data: object) -> str | None:
+    """Return the failing field name, or None when the registry is valid."""
+    if not isinstance(data, dict):
+        return "root"
+    if not isinstance(data.get("version"), int):
+        return "version"
+    if not isinstance(data.get("seed_version"), int):
+        return "seed_version"
+    rules = data.get("rules")
+    if not isinstance(rules, list):
+        return "rules"
+    seen: set[str] = set()
+    for i, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            return f"rules[{i}]"
+        rid = rule.get("id")
+        if not isinstance(rid, str) or not rid or rid in seen:
+            return f"rules[{i}].id"
+        seen.add(rid)
+        if rule.get("enforcement") not in ENFORCEMENTS:
+            return f"rules[{i}].enforcement"
+        if not isinstance(rule.get("hard"), bool):
+            return f"rules[{i}].hard"
+        det = rule.get("detector")
+        if det is not None and (not isinstance(det, str) or det not in ALLOWED_EVIDENCE):
+            return f"rules[{i}].detector"
+        source = rule.get("source")
+        if not isinstance(source, dict) or not isinstance(source.get("file"), str):
+            return f"rules[{i}].source"
+    thresholds = data.get("thresholds")
+    if not isinstance(thresholds, dict):
+        return "thresholds"
+    for key in REQUIRED_THRESHOLDS:
+        value = thresholds.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return f"thresholds.{key}"
+    patterns = data.get("correction_patterns")
+    if not isinstance(patterns, list):
+        return "correction_patterns"
+    for i, pat in enumerate(patterns):
+        if not isinstance(pat, dict) or not isinstance(pat.get("id"), str):
+            return f"correction_patterns[{i}].id"
+        if not isinstance(pat.get("regex"), str):
+            return f"correction_patterns[{i}].regex"
+        if not isinstance(pat.get("enabled"), bool):
+            return f"correction_patterns[{i}].enabled"
+        try:
+            re.compile(pat["regex"])
+        except re.error:
+            return f"correction_patterns[{i}].regex"
+    retention = data.get("retention")
+    if not isinstance(retention, dict):
+        return "retention"
+    max_sessions = retention.get("max_sessions")
+    if not isinstance(max_sessions, int) or isinstance(max_sessions, bool) or max_sessions < 1:
+        return "retention.max_sessions"
+    last = data.get("last_retro")
+    if last is not None:
+        if not isinstance(last, dict) or not isinstance(last.get("date"), str):
+            return "last_retro"
+        if not isinstance(last.get("captured_sessions"), int):
+            return "last_retro.captured_sessions"
+    return None
+
+
+def load_rules(cwd: Path) -> dict | None:
+    """Validated registry, or None when absent or malformed (hooks go silent)."""
+    path = Path(cwd) / RULES_REL
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    if validate_rules(data) is not None:
+        return None
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Lock
+# ---------------------------------------------------------------------------
+
+class _Lock:
+    """Cross-process lock via O_CREAT|O_EXCL. Same shape as _coograph_guard."""
+
+    def __init__(self, cwd: Path) -> None:
+        self.path = Path(cwd) / LOCK_REL
+        self.held = False
+
+    def __enter__(self) -> "_Lock":
+        deadline = time.monotonic() + LOCK_WAIT_SECONDS
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        while True:
+            try:
+                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.close(fd)
+                self.held = True
+                return self
+            except FileExistsError:
+                try:
+                    if time.time() - self.path.stat().st_mtime > LOCK_STALE_SECONDS:
+                        self.path.unlink()
+                        continue
+                except OSError:
+                    pass
+                if time.monotonic() >= deadline:
+                    return self
+                time.sleep(LOCK_POLL_SECONDS)
+
+    def __exit__(self, *exc: object) -> None:
+        if self.held:
+            try:
+                self.path.unlink()
+            except OSError:
+                pass
+            self.held = False
+
+
+# ---------------------------------------------------------------------------
+# Store
+# ---------------------------------------------------------------------------
+
+def _read_lines(path: Path) -> list[dict]:
+    records: list[dict] = []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(obj, dict) and obj.get("session_id"):
+                    records.append(obj)
+    except OSError:
+        return []
+    return records
+
+
+def load(cwd: Path) -> list[dict]:
+    return _read_lines(Path(cwd) / SIGNALS_REL)
+
+
+def known_sessions(cwd: Path) -> dict[str, int]:
+    """{session_id: message_count} from session records."""
+    out: dict[str, int] = {}
+    for rec in load(cwd):
+        if rec.get("kind") == "session":
+            count = (rec.get("evidence") or {}).get("message_count")
+            if isinstance(count, int):
+                out[str(rec["session_id"])] = count
+    return out
+
+
+def known_sources(cwd: Path) -> dict[str, int]:
+    """{session_id: source_bytes} from session records.
+
+    Lets the SessionStart catch-up skip a transcript without parsing it:
+    Claude Code names transcripts <session_id>.jsonl, so a file whose size
+    still matches the recorded size has nothing new in it.
+    """
+    out: dict[str, int] = {}
+    for rec in load(cwd):
+        if rec.get("kind") == "session":
+            size = (rec.get("evidence") or {}).get("source_bytes")
+            if isinstance(size, int):
+                out[str(rec["session_id"])] = size
+    return out
+
+
+def emit(cwd: Path, record: dict | None) -> bool:
+    """Append one record. False on any failure; never raises."""
+    if not record:
+        return False
+    path = Path(cwd) / SIGNALS_REL
+    try:
+        with _Lock(cwd) as lock:
+            if not lock.held:
+                return False
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n")
+        return True
+    except OSError:
+        return False
+
+
+def replace_session(
+    cwd: Path,
+    session_id: str,
+    records: list[dict],
+    max_sessions: int | None = None,
+) -> bool:
+    """Replace the transcript-origin records of one session atomically.
+
+    Hook-origin records for the same session are kept (they were emitted live
+    and the transcript parser cannot reconstruct them). Applies retention:
+    at most max_sessions sessions with a session record are kept, oldest
+    dropped by their started timestamp.
+    """
+    session_id = safe_session_id(session_id)
+    path = Path(cwd) / SIGNALS_REL
+    clean = [r for r in (records or []) if r]
+    if max_sessions is None:
+        rules = load_rules(cwd)
+        max_sessions = DEFAULT_MAX_SESSIONS
+        if rules:
+            max_sessions = int(rules["retention"]["max_sessions"])
+    try:
+        with _Lock(cwd) as lock:
+            if not lock.held:
+                return False
+            existing = _read_lines(path)
+            kept = [
+                r for r in existing
+                if not (r.get("session_id") == session_id and r.get("origin") == "transcript")
+            ]
+            merged = kept + clean
+
+            # Retention: rank sessions that have a session record.
+            starts: dict[str, str] = {}
+            for rec in merged:
+                if rec.get("kind") == "session":
+                    ev = rec.get("evidence") or {}
+                    starts[str(rec["session_id"])] = str(ev.get("started") or rec.get("ts") or "")
+            if len(starts) > max_sessions:
+                ordered = sorted(starts, key=lambda sid: starts[sid])
+                drop = set(ordered[: len(starts) - max_sessions])
+                merged = [r for r in merged if r.get("session_id") not in drop]
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".jsonl.tmp")
+            with tmp.open("w", encoding="utf-8") as fh:
+                for rec in merged:
+                    fh.write(json.dumps(rec, ensure_ascii=True, separators=(",", ":")) + "\n")
+            os.replace(tmp, path)
+        return True
+    except OSError:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Summary (shared by the status line and the analyzer)
+# ---------------------------------------------------------------------------
+
+def _started_of(session_rec: dict) -> str:
+    return str((session_rec.get("evidence") or {}).get("started") or session_rec.get("ts") or "")
+
+
+def sessions_since(sessions: dict[str, dict], last_retro: dict | None) -> int:
+    """Sessions that started after the last retro.
+
+    Anchored on a timestamp, never on a count: at the retention cap the
+    session count stops growing, so a count difference would read 0 forever.
+    The anchor is the start of the session the retro ran in when that record
+    exists, else last_retro.date (ISO-8601 UTC, written by retro.py
+    --mark-retro). Timestamps compare lexicographically; both are ISO.
+    """
+    if not last_retro:
+        return len(sessions)
+    anchor = ""
+    sid = str(last_retro.get("session_id") or "")
+    if sid and sid in sessions:
+        anchor = _started_of(sessions[sid])
+    if not anchor:
+        anchor = str(last_retro.get("date") or "")
+    if not anchor:
+        return len(sessions)
+    return sum(1 for rec in sessions.values() if _started_of(rec) > anchor)
+
+
+def summarize(records: list[dict], rules: dict) -> dict:
+    """Per-rule counts against thresholds. Pure; no I/O."""
+    thresholds = rules["thresholds"]
+    sessions = {
+        str(r["session_id"]): r for r in records if r.get("kind") == "session"
+    }
+    total_sessions = len(sessions)
+    since_last_retro = sessions_since(sessions, rules.get("last_retro"))
+
+    per_rule: list[dict] = []
+    over: list[dict] = []
+    for rule in rules["rules"]:
+        rid = rule["id"]
+        hits = [r for r in records if r.get("kind") == "violation" and r.get("rule") == rid]
+        events = len(hits)
+        rule_sessions = len({r.get("session_id") for r in hits})
+        deterministic = any(r.get("confidence") == "deterministic" for r in hits)
+        confidence = "deterministic" if deterministic or not hits else "heuristic"
+        det_hits = [r for r in hits if r.get("confidence") == "deterministic"]
+        det_events = len(det_hits)
+        det_sessions = len({r.get("session_id") for r in det_hits})
+
+        if rule.get("detector") is None:
+            status = "no_detector"
+        elif (
+            det_events >= thresholds["deterministic_events"]
+            and det_sessions >= thresholds["deterministic_sessions"]
+        ):
+            status = "over_threshold"
+        elif (
+            events >= thresholds["heuristic_events"]
+            and rule_sessions >= thresholds["heuristic_sessions"]
+        ):
+            status = "supporting_only"
+        elif (
+            events == 0
+            and rule["enforcement"] == "prose"
+            and not rule["hard"]
+            and total_sessions >= thresholds["prune_sessions"]
+        ):
+            status = "prune_candidate"
+        else:
+            status = "below_threshold"
+
+        entry = {
+            "id": rid,
+            "enforcement": rule["enforcement"],
+            "hard": rule["hard"],
+            "events": events,
+            "sessions": rule_sessions,
+            "confidence": confidence,
+            "status": status,
+        }
+        if status == "over_threshold":
+            entry["escalate_to"] = {
+                "prose": "hook-warn",
+                "hook-warn": "hook-block",
+                "hook-block": None,
+            }[rule["enforcement"]]
+            over.append(entry)
+        per_rule.append(entry)
+
+    over.sort(key=lambda e: (-e["events"], e["id"]))
+    return {
+        "total_sessions": total_sessions,
+        "since_last_retro": since_last_retro,
+        "per_rule": per_rule,
+        "over_threshold": over,
+    }
+
+
+def archived_changes(cwd: Path) -> int:
+    """Number of archived OpenSpec change directories in this project."""
+    archive = Path(cwd) / "openspec" / "changes" / "archive"
+    try:
+        return sum(1 for p in archive.iterdir() if p.is_dir())
+    except OSError:
+        return 0
+
+
+def transcripts_dir_for(cwd: Path) -> Path | None:
+    """Claude Code's transcript directory for a project, when it exists.
+
+    Claude Code names it after the absolute project path with every
+    character outside [A-Za-z0-9] replaced by '-'. Used only as a default
+    for backfill; the user can always pass an explicit directory.
+    """
+    try:
+        slug = re.sub(r"[^A-Za-z0-9]", "-", str(Path(cwd).resolve()))
+        candidate = Path.home() / ".claude" / "projects" / slug
+        return candidate if candidate.is_dir() else None
+    except (OSError, RuntimeError):
+        return None
+
+
+def status_line(cwd: Path) -> str | None:
+    """One line for SessionStart, or None when there is nothing to say."""
+    rules = load_rules(cwd)
+    if rules is None:
+        archives = archived_changes(cwd)
+        if archives >= DEFAULT_BOOTSTRAP_MIN_ARCHIVES:
+            return (
+                f"[retro] not enabled, {archives} archived changes found, "
+                "run /coograph-retro to bootstrap"
+            )
+        return None
+    records = load(cwd)
+    summary = summarize(records, rules)
+    n = summary["total_sessions"]
+    if n == 0:
+        return "[retro] enabled, no sessions captured yet"
+    over = summary["over_threshold"]
+    if not over:
+        return f"[retro] {n} sessions captured, nothing over threshold"
+    top = over[0]
+    call = ", run /coograph-retro"
+    head = f"[retro] {n} sessions captured, {len(over)} rules over threshold ({top['id']} {top['events']}x)"
+    # Never truncate the call to action; shorten the rule part instead.
+    return head[: 160 - len(call)] + call

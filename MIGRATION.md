@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-09-19: Retro, self-tuning guardrails (plugin 1.1.0)
+
+New: `.github/retro/` (analyzer, registry, README), `.claude/hooks/capture-signals.py` and `_coograph_signals.py`, `SessionEnd` + `SessionStart` wiring in `.claude/settings.json`, the `/coograph-retro` skill, the `@Retro` agent, and a retro prompt at the end of `coograph-apply` and `coograph-archive`.
+
+Registered projects get all of it on the next `git pull` of coograph. `sync.py` seeds `.github/retro/rules.json` when absent and merges new seeded rules into an existing one without touching local edits.
+
+Manual steps, because `sync.py` never overwrites `CLAUDE.md`, `AGENTS.md`, or `.github/copilot-instructions.md`:
+
+1. Add the retro row to the subagent table in `CLAUDE.md`:
+   `| Guardrail retro, instruction and hook tuning from evidence | /coograph-retro |`
+2. In the workflow "Done" step, append: run `python3 .github/retro/retro.py --status`; if it exits 0, ask `Run /coograph-retro now? (<n> sessions since last retro)`; if the file is missing, skip silently.
+3. Optional, `AGENTS.md` and `copilot-instructions.md`: add the `@Retro` agent row and the same "Done" instruction. The synced `coograph-apply` and `coograph-archive` skills already carry the prompt, so this is belt and braces.
+
+Unregistered projects: copy `.github/retro/` (without `tests/` and without `rules.json`, which is coograph's own live registry), the two new hook files, and `.claude/settings.json` from the coograph repo, then run `python3 .github/retro/retro.py --merge-seed` (creates `rules.json` from `rules.seed.json`) and `python3 .github/retro/retro.py --validate`. Backfill past sessions with `python3 .claude/hooks/capture-signals.py --backfill ~/.claude/projects/<slug> --cwd .`; the slug is your absolute project path with every non-alphanumeric character replaced by `-`.
+
+---
+
 ## 2026-05-18 — Skill rename to `coograph-*` namespace
 
 All skills now live under the `coograph-*` prefix. Issue [#9](https://github.com/paullukic/coograph/issues/9).

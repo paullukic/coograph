@@ -1,0 +1,9 @@
+{
+  "name": "code-graph",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Code dependency graph for AI agent context",
+  "dependencies": {
+    "d3": "^7.9.0"
+  }
+}

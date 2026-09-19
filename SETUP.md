@@ -79,7 +79,7 @@ uv run --with-requirements .github/code-graph/requirements.txt .github/code-grap
     "code-graph": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--with", "mcp>=1.0.0", ".github/code-graph/server.py"]
+      "args": ["run", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"]
     }
   }
 }
@@ -92,7 +92,7 @@ uv run --with-requirements .github/code-graph/requirements.txt .github/code-grap
     "code-graph": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--with", "mcp>=1.0.0", "${workspaceFolder}/.github/code-graph/server.py"]
+      "args": ["run", "--with-requirements", "${workspaceFolder}/.github/code-graph/requirements.txt", "${workspaceFolder}/.github/code-graph/server.py"]
     }
   }
 }
@@ -105,7 +105,7 @@ uv run --with-requirements .github/code-graph/requirements.txt .github/code-grap
     "code-graph": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--with", "mcp>=1.0.0", ".github/code-graph/server.py"]
+      "args": ["run", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"]
     }
   }
 }

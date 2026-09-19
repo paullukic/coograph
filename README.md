@@ -24,12 +24,14 @@ Ships a structured workflow, specialized agents with anti-hallucination guardrai
 ## Contents
 
 - [Quick Start](#quick-start)
+- [Claude Plugin](#claude-plugin)
 - [Codex CLI Notes](#codex-cli-notes)
 - [What's Inside](#whats-inside)
 - [How it compares](#how-it-compares)
 - [Workflow](#workflow)
 - [Agents](#agents)
 - [Claude Code Hooks](#claude-code-hooks)
+- [Retro](#retro)
 - [Code Graph](#code-graph)
 - [Customization](#customization)
 - [Star history](#star-history)
@@ -56,6 +58,22 @@ Natural-language paraphrases ("initialize the project", "set up coograph", "wire
 The initializer prompts which tools to set up (multi-select), detects your stack, fills all `_TBD_` placeholders, and optionally sets up the code-graph. About 2 minutes.
 
 Manual setup: see [SETUP.md](SETUP.md). Prerequisites and visualizer: see [.github/code-graph/README.md](.github/code-graph/README.md).
+
+## Claude Plugin
+
+Coograph also ships as a Claude plugin for **Claude Code** and **Claude Cowork**: 13 skills, 6 agents, and the guardrail hooks in one install. This repo is its own plugin marketplace.
+
+| Host | Install |
+|---|---|
+| **Claude Code** | `/plugin marketplace add paullukic/coograph`, then `/plugin install coograph@coograph` |
+| **Claude Cowork** | **Customize → Plugins → Add marketplace** → `paullukic/coograph` → **Install**. Or upload `dist/coograph.plugin` from the Plugins page (build it with `python .github/scripts/build-plugin.py --zip`). |
+
+- Plugin skills are namespaced: `/coograph:coograph-init`, `/coograph:coograph-review`, and so on. Run `/coograph:coograph-init` in a project folder to scaffold it. Templates are bundled in the plugin, so no coograph checkout is needed.
+- Marketplace **Update** refreshes the plugin's own skills, agents, and hooks. Files coograph-init copied into a project (instructions, `.claude/hooks/`, `.github/code-graph/`, MCP config) are not synced for plugin installs: re-run `/coograph:coograph-init` to refresh them.
+- Plugin hooks act only in projects set up with coograph-init. When a project also wires its own `.claude/hooks/` copies, each event is handled by exactly one copy, so nothing fires twice and nothing goes silent on hosts that skip project settings.
+- The code-graph MCP server stays per-project (init writes the MCP config). Cowork loads connectors from **Customize**, so expect Cowork sessions to fall back to `sqlite3` and grep for graph queries.
+
+**Maintainers:** `plugin/` and `.claude-plugin/marketplace.json` are generated. After changing `.github/skills/`, `.github/agents/`, `.claude/commands/`, `.claude/hooks/`, or any file coograph-init copies, run `python .github/scripts/build-plugin.py` and commit the result. `--check` exits 1 when the committed output is stale. Bump `VERSION` in the script on every release: hosts cache plugins per version.
 
 ## Codex CLI Notes
 
@@ -91,8 +109,9 @@ Run `/skills` in a Codex session. If `coograph-init` is missing, either your Cod
 | Component | Purpose |
 |-----------|---------|
 | **Workflow** | Plan → Propose → Apply → Review → Archive pipeline |
-| **Agents** | 5 specialized agents (Planner, Reviewer, Debugger, Verifier, Explore) |
-| **Claude Code Hooks** | Lifecycle hooks — block generated files, log bash, warn on out-of-scope edits, inject graph status |
+| **Agents** | 6 specialized agents (Planner, Reviewer, Debugger, Verifier, Explore, Retro) |
+| **Claude Code Hooks** | Lifecycle hooks: block generated files, log bash, warn on out-of-scope edits, inject graph status, capture guardrail signals |
+| **Retro** | Measures which rules get broken and what sessions cost, then proposes instruction and hook edits as an OpenSpec. Local only. |
 | **Code Graph** | SQLite dependency graph with MCP server for targeted queries |
 | **Instructions** | Domain-specific guidance (testing, styling) loaded on demand |
 | **Sync** | Template updates propagate to every registered project on `git pull` |
@@ -106,6 +125,7 @@ Run `/skills` in a Codex session. If `coograph-init` is missing, either your Cod
 | Workflow gate | OpenSpec proposal flow | none | manual / ad-hoc | manual / ad-hoc |
 | Sync template updates | `git pull` → all projects | re-render template | manual edit | manual edit |
 | Anti-hallucination guards | hooks + agent constraints | none | depends on prose | none |
+| Guardrails that learn | Retro: violations + token cost measured per session, edits proposed from evidence | none | none | none |
 | Cost to adopt | 2 min `/coograph-init` | scaffold one repo | copy-paste a file | copy-paste rules |
 | License | MIT | varies | n/a | n/a |
 
@@ -168,7 +188,8 @@ Lifecycle hooks in `.claude/hooks/`, wired via `.claude/settings.json`. They run
 | **`block-generated.py`** | PreToolUse (Edit/Write) | **Blocks** edits to files under `generated/`, `dist/`, `build/`, `.next/`, `node_modules/`, or anything with `@generated` / `DO NOT EDIT` / `AUTO-GENERATED` in the first 5 lines. Protects codegen output from accidental hand-edits. |
 | **`log-bash.py`** | PreToolUse (Bash) | Appends every bash command to `.coograph/session.log` *and* `.coograph/sessions/<session_id>.log` (both gitignored, per-project). Two-layer audit trail. Codex CLI + OpenCode variants write to the same files — see [Bash audit log](#bash-audit-log) below. |
 | **`report-graph.py`** | SessionStart | Reports code-graph state at session start: `[code-graph] N nodes, M edges, SIZEkb, updated Xh ago`. Prints a rebuild hint if `graph.db` is missing but the server is present. |
-| **`warn-scope.py`** | PreToolUse (Edit/Write) | If an active OpenSpec exists, **warns** (non-blocking) when editing a file not referenced in its `tasks.md`. Surfaces scope creep without stopping work. |
+| **`warn-scope.py`** | PreToolUse (Edit/Write) | If an active OpenSpec exists, **warns** (non-blocking) when editing a file not referenced in its `tasks.md`. Surfaces scope creep without stopping work. Records the warning as a Retro signal. |
+| **`capture-signals.py`** | SessionEnd, SessionStart | On SessionEnd, turns the session transcript into Retro signals (`.coograph/signals.jsonl`, metadata only). On SessionStart, catches up transcripts from killed sessions (time-boxed) and prints `[retro] N sessions captured, K rules over threshold, run /coograph-retro`. See [Retro](#retro). |
 
 Personal or machine-specific overrides go in `.claude/settings.local.json` (gitignored, never synced). `.claude/settings.json` is template-managed and gets overwritten on sync.
 
@@ -238,6 +259,43 @@ tail -f .coograph/session.log
 ```
 
 **Migrating from the legacy `.claude/session.log` path:** earlier versions of Coograph wrote audit lines to `.claude/session.log` and `.claude/sessions/`. If you have old logs there, `mv .claude/session.log .coograph/session.log.legacy` once and the new path takes over from the next command on. No automatic migration — the legacy file is not touched on its own.
+
+## Retro
+
+Instruction files grow by accretion. Every rule was added after someone watched an agent do the wrong thing, and nobody measures whether the rule works afterwards. Retro closes that loop: it records when the guardrails get broken, measures what each session costs in tokens, and proposes concrete edits to the instructions, hooks, and skills as an OpenSpec you approve or reject line by line.
+
+The evidence that motivated it came from this repo. `CLAUDE.md` opens with a shouted "CODE-GRAPH FIRST" rule. A September 2026 session transcript for this project shows the agent running `Grep` five times before touching the graph, then reaching the graph through a Python sqlite call instead of the MCP tools. Nobody knew until the transcript was parsed.
+
+### What happens
+
+1. **Capture.** A Claude Code `SessionEnd` hook parses the transcript Claude Code already keeps and appends metadata to `.coograph/signals.jsonl` (gitignored): tool names, counts, rule ids, repo-relative paths, command hashes, timestamps, token usage. Never prompt text, code, tool output, or full commands. A sentinel test enforces that. `warn-scope.py` and `block-generated.py` append a record each time they fire. A `SessionStart` catch-up handles killed sessions and prints one `[retro]` status line so nobody has to remember a step.
+2. **Analyze.** `python3 .github/retro/retro.py --report` writes `.coograph/retro/report.md`: every rule against its threshold with an "escalate to" column, path clusters, build retries, tokens per session with a before / after split around the last rule change, workflow adherence (editing sessions that also ran a review or verify skill), instruction file sizes against a token budget, and archive statistics. Deterministic Python, stdlib only, no model involved.
+3. **Propose.** `/coograph-retro` reads the report and writes `openspec/changes/<date>-retro-<n>/` with a proposal, a spec, tasks, and ready patches. Five change types: edit a rule, add a rule, add a scoped `.github/instructions/*.md` file for a path cluster, add a hook, prune a rule nobody trips. Every change opens with three plain sentences (what happened, why it matters, what changes) and an evidence block whose numbers come only from the report.
+
+### Rules of the loop
+
+- A prose rule that is still being violated is escalated to a hook. It is never reworded louder; the data says that does not work.
+- Heuristic signals (user corrections, the OpenSpec gate guess) are never sole evidence.
+- Over the token budget, every added rule is paired with a pruned one.
+- Retro may target its own skill, detectors, and hooks, but cannot change thresholds or disable a detector without an explicit `Loosen:` task.
+- Nothing is applied automatically. Nothing leaves the machine.
+
+### Day one, not day twenty
+
+Claude Code keeps every past transcript under `~/.claude/projects/<slug>/`. Init offers to backfill them, so the first report has real sessions in it immediately. Projects that never enabled Retro but have ten or more archived OpenSpec changes can bootstrap by running `/coograph-retro`; the session-start line tells them so.
+
+### Per-tool support
+
+| Tool | Transcript capture | Hook-emitted signals | `[retro]` session-start line | `/coograph-retro` skill |
+|---|---|---|---|---|
+| **Claude Code** / Cowork plugin | ✅ all detectors | ✅ scope, generated files | ✅ | ✅ |
+| **Codex CLI** | ⛔ | ⛔ (Bash audit log only) | ⛔ | ✅ |
+| **OpenCode** | ⛔ | ⛔ (Bash audit log only) | ⛔ | ✅ |
+| **VS Code Copilot**, **Cursor**, **Windsurf**, **Aider**, **Cline** | ⛔ | ⛔ | ⛔ | ✅ (`@Retro` agent in Copilot) |
+
+Full detector table, registry format, thresholds, and commands: [`.github/retro/README.md`](.github/retro/README.md). The registry each project edits is `.github/retro/rules.json`, created from the shipped `rules.seed.json` and never overwritten by sync. Tests: `python -m unittest discover -s .github/retro/tests`.
+
+This is not recursive self-improvement in the model sense. It is the instruction-layer version, with a human at the gate. Whether rules keep improving across many cycles is unproven; the first retro usually finds most of the value.
 
 ## Code Graph
 
