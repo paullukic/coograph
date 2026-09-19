@@ -22,6 +22,10 @@ try:
 except ImportError:  # guard not copied next to this hook: run unguarded
     def should_skip(payload: dict, hook_file: str) -> bool:
         return False
+try:
+    import _coograph_signals as signals
+except ImportError:  # Retro store not copied next to this hook: warn only
+    signals = None
 
 BACKTICK_PATH_RE = re.compile(r"`([^`\s]+)`")
 PATH_SUFFIXES = {
@@ -126,7 +130,27 @@ def main() -> int:
         f"Confirm intent or update tasks.md.",
         file=sys.stderr,
     )
+    _emit_signal(payload, cwd, rel, slug)
     return 1
+
+
+def _emit_signal(payload: dict, cwd: Path, rel: str, slug: str) -> None:
+    """Record the warning for Retro. Never affects the hook's own behavior."""
+    if signals is None:
+        return
+    try:
+        signals.emit(cwd, signals.make_record(
+            tool="claude-code",
+            session_id=str(payload.get("session_id") or "unknown"),
+            kind="violation",
+            rule="scope",
+            detector="scope-warning",
+            confidence="deterministic",
+            evidence={"path": signals.rel_path(cwd, rel), "openspec": slug[:120]},
+            origin="hook",
+        ))
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 PLUGIN_NAME = "coograph"
-VERSION = "1.0.0"  # bump on every release so marketplace Update picks it up
+VERSION = "1.1.0"  # bump on every release so marketplace Update picks it up
 DESCRIPTION = (
     "Graph-first AI coding workflow: Plan, Propose, Apply, Review, Archive with "
     "OpenSpec gates, evidence-based agents, and guardrail hooks."
@@ -81,6 +81,7 @@ TEMPLATE_PATHS = [
     ".github/skills",
     ".github/agents",
     ".github/code-graph",
+    ".github/retro",
     ".claude/commands",
     ".claude/hooks",
     ".claude/settings.json",
@@ -92,7 +93,14 @@ TEMPLATE_PATHS = [
     "AGENTS.md",
 ]
 
-SKIP_NAMES = {".gitkeep", "__pycache__", "node_modules", "settings.local.json", ".DS_Store"}
+# "tests" keeps .github/retro/tests/ (fixtures + unittest files) out of the
+# template. "rules.json" keeps this repo's live Retro registry out too:
+# downstream projects seed theirs from rules.seed.json (init / sync /
+# retro.py --merge-seed), and a live registry must never ship as a template.
+SKIP_NAMES = {
+    ".gitkeep", "__pycache__", "node_modules", "settings.local.json", ".DS_Store",
+    "tests", "rules.json",
+}
 SKIP_SUFFIXES = {".pyc"}
 
 HOOK_PATH_RE = re.compile(r'"\$CLAUDE_PROJECT_DIR/\.claude/hooks/([\w.-]+\.py)"')

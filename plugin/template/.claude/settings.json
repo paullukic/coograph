@@ -1,4 +1,4 @@
-﻿{
+{
   "hooks": {
     "SessionStart": [
       {
@@ -6,6 +6,10 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/report-graph.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/capture-signals.py\""
           }
         ]
       }
@@ -30,6 +34,16 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/warn-scope.py\""
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/capture-signals.py\""
           }
         ]
       }

@@ -196,6 +196,7 @@ All agents and interactions follow these communication principles. This section 
 | `@Planner` | Interview-driven planning with codebase investigation |
 | `@Verifier` | Evidence-based completion checks — runs tests, validates acceptance criteria |
 | `@Explore` | Fast read-only codebase search and Q&A — prefer over manual search chains |
+| `@Retro` | Measures how the guardrails held up across sessions and proposes instruction, hook, and skill edits as an OpenSpec. Proposes only. |
 
 There is no separate `@Implementer` agent. The agent that plans and proposes also implements directly.
 
@@ -220,6 +221,7 @@ Use conventional commit format. For non-trivial changes, add trailers: `Constrai
 - **Separate authoring and review passes**: Keep writing and reviewing as separate activities. Never self-approve in the same context — use the Reviewer or Verifier agent.
 - **Stuck rule**: After 3 failed attempts at the same fix, stop and ask for direction. Do not try variation after variation of the same approach.
 - **Context hygiene**: In long conversations, re-read modified files from disk before acting on them. Never cite your own prior output as evidence — only fresh tool output counts. When conversation history contradicts a file on disk, trust the file.
+- **Retro at the end**: After archiving a change, run `python3 .github/retro/retro.py --status`. Exit 0 means enough sessions were captured since the last retro: ask one line, `Run /coograph-retro now? (<n> sessions since last retro)`, and wait. If the file is missing, skip silently. Never run a retro unprompted. Rules and thresholds live in `.github/retro/rules.json`; detectors are documented in `.github/retro/README.md`.
 
 ### Delegation (Hand-off, Not Auto-dispatch)
 

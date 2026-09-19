@@ -70,6 +70,19 @@ mv openspec/changes/<name> openspec/changes/archive/YYYY-MM-DD-<slug>
 **Tasks:** [All complete / X incomplete — user confirmed]
 ```
 
+## Step 6: Offer a retro
+
+A finished change is the natural moment to check how the guardrails held up. Run:
+
+```bash
+python3 .github/retro/retro.py --status
+```
+
+- If the file does not exist or the command fails: skip this step silently. Retro is not enabled here.
+- Exit code 0: ask exactly one line and wait: `Run /coograph-retro now? (<n> sessions since last retro)` using the number the command printed. Default is no. Do not run it unprompted.
+- Exit code 4: say `Retro is not enabled, but <n> archived changes are enough to bootstrap it. Run /coograph-retro when you want.` and continue.
+- Any other exit code: say nothing.
+
 ## Guardrails
 
 - Never auto-select a change — always ask the user

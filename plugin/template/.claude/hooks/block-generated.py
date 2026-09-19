@@ -19,6 +19,10 @@ try:
 except ImportError:  # guard not copied next to this hook: run unguarded
     def should_skip(payload: dict, hook_file: str) -> bool:
         return False
+try:
+    import _coograph_signals as signals
+except ImportError:  # Retro store not copied next to this hook: block only
+    signals = None
 
 BLOCKED_SEGMENTS = {
     "generated",
@@ -99,6 +103,7 @@ def main() -> int:
             "Edit the source or regenerate via the project's codegen command.",
             file=sys.stderr,
         )
+        _emit_signal(payload, cwd, rel, "directory")
         return 2
 
     if ".generated." in target.name or ".gen." in target.name:
@@ -108,6 +113,7 @@ def main() -> int:
             "Edit the source template instead.",
             file=sys.stderr,
         )
+        _emit_signal(payload, cwd, rel, "filename")
         return 2
 
     marker = _marker_hit(target)
@@ -117,9 +123,29 @@ def main() -> int:
             "This file is machine-generated - edit its source.",
             file=sys.stderr,
         )
+        _emit_signal(payload, cwd, rel, "header")
         return 2
 
     return 0
+
+
+def _emit_signal(payload: dict, cwd: Path, rel: str, reason: str) -> None:
+    """Record the block for Retro. Never affects the hook's own behavior."""
+    if signals is None:
+        return
+    try:
+        signals.emit(cwd, signals.make_record(
+            tool="claude-code",
+            session_id=str(payload.get("session_id") or "unknown"),
+            kind="violation",
+            rule="generated-files",
+            detector="generated-file-block",
+            confidence="deterministic",
+            evidence={"path": signals.rel_path(cwd, rel), "reason": reason},
+            origin="hook",
+        ))
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

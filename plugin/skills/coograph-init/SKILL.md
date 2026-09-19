@@ -48,6 +48,10 @@ Ask the user these questions one at a time (wait for each answer before proceedi
   - Ask this only if Step 1 question 5 is `yes`.
   - Options: `yes`, `no`
   - If `yes`, ask for additional paths (optional). Include `.code-graph/` by default.
+7. **Enable Retro (self-tuning guardrails)?**
+   - Options: `yes` (recommended), `no`
+   - Explain in two lines: "Retro records when the agent breaks a project rule (grep before the code graph, edits outside the approved change, hand-edits to generated files, new dependencies) and what each session costs in tokens, then proposes fixes to the instruction files and hooks as an OpenSpec you approve. It stores tool names, counts, and paths only; no prompt text, code, or output, and nothing leaves the machine."
+   - Capture needs Claude Code (transcripts and lifecycle hooks). Other tools get the analyzer and the `/coograph-retro` skill, but no capture. Say this if Claude Code was not selected in question 2.
 
 ## Step 2: Detect Tech Stack
 
@@ -89,11 +93,12 @@ Copy files from the template root (see Template source) to the target project. O
 - `.github/instructions/` (all instruction `.md` files — testing, styling, brutal-honesty)
 - `.github/skills/` (all skill directories — every supported tool delegates here, including the Claude Code command wrappers in `.claude/commands/` and the multi-tool slash registrations under `templates/`)
 - `openspec/config.yaml` (create `openspec/` dir if needed)
+- `.github/retro/` (`retro.py`, `_coograph_signals.py`, `rules.seed.json`, `README.md`; never `tests/`, never `rules.json`). Always, whatever the answer to Step 1 question 7: the analyzer and the `/coograph-retro` skill must be able to bootstrap later. Only when question 7 is `yes`, also create the live registry: `cd <target> && python3 .github/retro/retro.py --merge-seed` (creates `rules.json` from `rules.seed.json`, or adds new seeded rules to an existing one without touching local edits). Never copy `rules.json` from the template root; it is the coograph repo's own live registry.
 
 **For Claude Code:**
 - `CLAUDE.md`
-- `.claude/commands/coograph-*.md` (every Coograph slash command — `/coograph-init` itself, so the project can re-init others, plus `/coograph-new-ticket`, `/coograph-plan`, `/coograph-review`, `/coograph-verify`, `/coograph-debug`, `/coograph-search`, which the copied `CLAUDE.md` references)
-- `.claude/hooks/` (all hook scripts — block-generated, log-bash, report-graph, warn-scope)
+- `.claude/commands/coograph-*.md` (every Coograph slash command: `/coograph-init` itself, so the project can re-init others, plus `/coograph-new-ticket`, `/coograph-plan`, `/coograph-review`, `/coograph-verify`, `/coograph-debug`, `/coograph-search`, `/coograph-retro`, which the copied `CLAUDE.md` references)
+- `.claude/hooks/` (all hook scripts: block-generated, log-bash, report-graph, warn-scope, capture-signals, plus the shared `_coograph_guard.py` module and the `_coograph_signals.py` shim that loads `.github/retro/_coograph_signals.py`)
 - `.claude/settings.json` (wires the hooks into Claude Code lifecycle events)
 - Do NOT copy `.claude/settings.local.json` — that's per-machine personal overrides
 
@@ -109,6 +114,7 @@ Copy files from the template root (see Template source) to the target project. O
 
 **For OpenCode:**
 - `.opencode/commands/coograph-init.md` (registers `/coograph-init` slash in OpenCode — note the plural `commands/`)
+- `.opencode/commands/coograph-retro.md` (registers `/coograph-retro`)
 - `AGENTS.md` (auto-read by OpenCode; same file as VS Code Copilot — copy once)
 - (delegates to `.github/skills/coograph-init/` — already supplied by the always-copy block)
 
@@ -459,6 +465,49 @@ Wait for the user's choice. Do not auto-fix.
    ```
 6. If healthy, output the success line from 9c and continue.
 
+## Step 10: Retro first run (only if Retro enabled)
+
+Run this step only if the user selected `yes` in Step 1 question 7.
+
+### 10a. Verify the files landed
+
+`<target>/.github/retro/rules.json`, `rules.seed.json`, `retro.py`, `_coograph_signals.py`, and `README.md` exist. If Claude Code was selected, `<target>/.claude/hooks/capture-signals.py` and the `_coograph_signals.py` shim exist and `<target>/.claude/settings.json` wires `capture-signals.py` under both `SessionStart` and `SessionEnd`. Run:
+
+```bash
+cd <target> && python3 .github/retro/retro.py --validate
+```
+
+It must print `retro: rules.json valid`.
+
+### 10b. Backfill from existing transcripts (Claude Code only)
+
+Claude Code keeps every transcript for the project under `~/.claude/projects/<slug>/`, where `<slug>` is the absolute target path with every character outside `A-Z a-z 0-9` replaced by `-`:
+
+| OS | example path | slug |
+|---|---|---|
+| Windows | `C:\paul\code\app` | `C--paul-code-app` |
+| macOS / Linux | `/home/paul/app` | `-home-paul-app` |
+
+Work out the directory and count its `*.jsonl` files. If it does not exist or is empty, say so and skip to 10c. Otherwise ask a Yes/No question:
+
+> **Backfill Retro from existing transcripts?** "Found <N> Claude Code transcripts for this project at `<path>`. Retro stores tool names, counts, rule ids, file paths, and token totals only; no prompt text, code, or output. Read them now?"
+
+On yes:
+
+```bash
+cd <target> && python3 .claude/hooks/capture-signals.py --backfill "<path>" --cwd .
+```
+
+Report the printed `captured / skipped / failed` line verbatim.
+
+### 10c. First report
+
+```bash
+cd <target> && python3 .github/retro/retro.py --report
+```
+
+Show the user the first paragraph it prints (the plain-language opener) and the path to `report.md`. If nothing was captured, the opener says so; that is fine. Tell the user: "From now on every Claude Code session start prints a `[retro]` line, and `/coograph-retro` turns the report into proposals when there is enough evidence."
+
 ## Guardrails
 
 - Never guess at commands — if you can't detect them, ask.
@@ -468,3 +517,4 @@ Wait for the user's choice. Do not auto-fix.
 - Prefer what the project already does over generic defaults.
 - Initialization is complete only when there are zero `_TBD_` and `<!-- FILL` markers in copied instruction files.
 - If code-graph setup is enabled, initialization is complete only when `.code-graph/graph.db` exists in the target project, at least one MCP config file has been written, AND Step 9 health check has run (either reporting healthy or finishing the user-chosen fix path).
+- If Retro is enabled, initialization is complete only when `retro.py --validate` passed and Step 10c printed a report opener.
