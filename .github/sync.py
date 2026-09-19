@@ -20,12 +20,18 @@ TEMPLATE_ROOT = Path(__file__).parent.parent  # .github/sync.py -> root
 PROJECTS_FILE = TEMPLATE_ROOT / "projects.json"
 LOG_FILE = Path(__file__).parent / "sync.log"
 
-# Skip these when recursively copying directories
-SKIP_DIRS = {"node_modules", "__pycache__", ".code-graph"}
+# Skip these when recursively copying directories. "tests" is here for
+# .github/retro/tests/ (unit tests stay in the coograph repo); no other
+# synced tree has a directory by that name.
+SKIP_DIRS = {"node_modules", "__pycache__", ".code-graph", "tests"}
 SKIP_SUFFIXES = {".bak", ".pyc", ".db"}
 
-# Never overwrite these - user has customized them during initialization
-SKIP_FILES = {"CLAUDE.md", "copilot-instructions.md", "config.yaml"}
+# Never overwrite these - user has customized them during initialization.
+# rules.json is the per-project Retro registry: local edits, thresholds and
+# last_retro must survive a sync. New seeded rules reach it from
+# rules.seed.json (which IS synced) through `retro.py --merge-seed`, see
+# _sync_retro. Applies to every synced tree; only .github/retro/ has one.
+SKIP_FILES = {"CLAUDE.md", "copilot-instructions.md", "config.yaml", "rules.json"}
 
 # Paths a previous template version placed in consumer projects but that
 # have since been renamed or removed. Each sync run deletes these so the
@@ -98,6 +104,38 @@ def _copy_dir(src: Path, dst: Path, dry_run: bool = False) -> int:
     return count
 
 
+def _sync_retro(path: Path, prefix: str, dry_run: bool = False) -> int:
+    """Copy .github/retro/ (analyzer + README, never tests/) and merge the
+    seeded registry into the project's rules.json without overwriting it."""
+    src = TEMPLATE_ROOT / ".github" / "retro"
+    if not src.exists():
+        return 0
+    dst = path / ".github" / "retro"
+    n = _copy_dir(src, dst, dry_run=dry_run)
+    log.info("  %s.github/retro  %d files", prefix, n)
+    seed = src / "rules.seed.json"
+    target = dst / "rules.json"
+    if not dry_run and seed.exists():
+        if not target.exists():
+            shutil.copy2(seed, target)
+            log.info("  %s.github/retro/rules.json  seeded", prefix)
+            n += 1
+        else:
+            try:
+                out = subprocess.run(
+                    [sys.executable, str(dst / "retro.py"), "--cwd", str(path),
+                     "--merge-seed", str(seed)],
+                    capture_output=True, text=True, timeout=30,
+                )
+                log.info("  %s%s", prefix, (out.stdout or out.stderr).strip())
+            except (OSError, subprocess.SubprocessError) as e:
+                log.warning("  retro --merge-seed failed: %s", e)
+    elif dry_run and seed.exists():
+        log.info("  %s.github/retro/rules.json  %s", prefix,
+                 "would seed" if not target.exists() else "would merge seed")
+    return n
+
+
 def _cleanup_obsolete(project_path: Path, dry_run: bool = False) -> int:
     """Remove paths in OBSOLETE_PATHS from project_path. Returns removed count."""
     removed = 0
@@ -144,6 +182,10 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
         n = _copy_dir(skills_src, path / ".github" / "skills", dry_run=dry_run)
         log.info("  %s.github/skills  %d files", prefix, n)
         total += n
+
+    # Retro analyzer + registry: every tool runs the /coograph-retro skill,
+    # so this is always-copy too. Capture hooks are Claude-only (below).
+    total += _sync_retro(path, prefix, dry_run=dry_run)
 
     # Claude Code commands
     if "claude" in tools:

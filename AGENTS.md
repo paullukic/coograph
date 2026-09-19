@@ -25,6 +25,7 @@ When working on this codebase:
 - **Structure**: <!-- FILL: e.g. "src/app/ pages, src/components/ shared, src/lib/ utilities" -->
 - **Communication**: Read `.github/instructions/brutal-honesty.instructions.md` at session start and apply throughout. Direct, evidence-based, severity-rated. Every finding cites `file:line` with verbatim quotes.
 - **Workflow**: Plan → Propose (OpenSpec) → Apply → Quality Gates → Review Gate → Archive. Skip only for exemptions above. After 3 failed attempts, stop and ask.
+- **Retro**: After archiving, run `python3 .github/retro/retro.py --status`. Exit 0 means enough sessions were captured; ask one line, `Run /coograph-retro now? (<n> sessions since last retro)`, and wait. Missing file: skip silently. Never run a retro unprompted.
 
 If `.github/copilot-instructions.md` has unfilled sections (`FILL` or `_TBD_`), ask the user before coding.
 
@@ -37,5 +38,6 @@ If `.github/copilot-instructions.md` has unfilled sections (`FILL` or `_TBD_`), 
 | `@Planner` | Interview-driven planning |
 | `@Verifier` | Evidence-based completion checks |
 | `@Explore` | Codebase search and Q&A |
+| `@Retro` | Measures guardrail violations and session cost, proposes instruction and hook edits as an OpenSpec |
 
 No separate `@Implementer` — the agent that plans also implements.

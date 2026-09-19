@@ -12,6 +12,8 @@ This project ships with the Coograph AI coding template.
 
 If the user types `/coograph-init` (or asks to "initialize the project", "set up coograph"), follow `.github/skills/coograph-init/SKILL.md` exactly.
 
+If the user types `/coograph-retro` (or asks to "run a retro", "check the guardrails"), follow `.github/skills/coograph-retro/SKILL.md` exactly. It measures rule violations and session cost from signals captured in Claude Code sessions and proposes instruction and hook edits as an OpenSpec. It never applies. This tool does not capture signals itself; the skill still runs the analyzer and, when nothing was captured, says so.
+
 ## On every session start
 
 1. **Read `.github/copilot-instructions.md`** — full project conventions, code style, data layer patterns.

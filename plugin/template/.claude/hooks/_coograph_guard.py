@@ -45,6 +45,9 @@ def _event_key(payload: dict) -> str | None:
         # SessionStart events (resume, clear, compact) in the same session.
         bucket = int(time.time() // SESSION_START_WINDOW_SECONDS)
         return f"{event}:{payload.get('source', '')}:{bucket}"
+    if event == "SessionEnd" and payload.get("session_id"):
+        # One capture per session end; the transcript is complete by then.
+        return f"{event}:{payload['session_id']}"
     return None
 
 

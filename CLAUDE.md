@@ -68,6 +68,8 @@ Read `.github/instructions/brutal-honesty.instructions.md` at session start and 
 
   The only valid reason to bypass code-graph is that it is genuinely not present. "Slow", "unwieldy", "less convenient", "I already know the file", or "it's a simple lookup" are NOT valid reasons. Never skip Step 1 for Step 2, and never skip Step 2 for Step 3.
 
+- **Retro.** Sessions are measured against these rules (see `.github/retro/README.md`). When the session-start line says `run /coograph-retro`, mention it to the user once. Never run it unprompted.
+
 ## Implementation Workflow (MANDATORY)
 
 Before any non-trivial implementation, follow: **Plan → Propose → Apply**. Never skip straight to writing code. Full rules are in `.github/copilot-instructions.md` § Workflow — read that section. Summary below.
@@ -107,7 +109,7 @@ See `openspec/changes/archive/` for reference. **Wait for user approval** before
 1. **Quality gates** — run typecheck, lint, format. Fix until clean.
 2. **Feature inventory** — for every modified file, verify all pre-existing features are preserved. For new files, verify against spec.
 3. **Review gate** — run `/coograph-review`. Fix Critical/Warning findings. Re-run quality gates after fixes. Re-review only if fixes were substantial.
-4. **Done** — declare completion, ask user for next steps.
+4. **Done**: declare completion. Run `python3 .github/retro/retro.py --status`; if it exits 0, ask one line: `Run /coograph-retro now? (<n> sessions since last retro)`. If the file is missing, skip silently. Then ask the user for next steps.
 
 ### Archiving
 
@@ -122,6 +124,7 @@ Move completed OpenSpecs from `openspec/changes/<slug>/` to `openspec/changes/ar
 | Planning / unclear requirements | `/coograph-plan` |
 | Completion evidence, verification | `/coograph-verify` |
 | Codebase search, research | `/coograph-search` |
+| Guardrail retro, instruction and hook tuning from evidence | `/coograph-retro` |
 
 Pass the full task description and relevant file paths when delegating.
 

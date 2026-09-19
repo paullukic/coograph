@@ -92,6 +92,8 @@ If commands are not documented, ask the user.
 All tasks complete. Ready to archive — run coograph-archive.
 ```
 
+Then run `python3 .github/retro/retro.py --status`. If the file is missing or the command fails, say nothing. If it exits 0, ask one line and wait: `Run /coograph-retro now? (<n> sessions since last retro)`. Default is no.
+
 If paused:
 ```
 ## Implementation Paused
