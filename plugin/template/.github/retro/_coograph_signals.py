@@ -84,6 +84,7 @@ REQUIRED_THRESHOLDS = {
 DEFAULT_BOOTSTRAP_MIN_ARCHIVES = 10
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
+_WIN_ABS_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +111,14 @@ def rel_path(cwd: Path, raw: object) -> str:
     if not text:
         return "external"
     try:
+        # A Windows drive or UNC path handled on a POSIX host (transcripts
+        # copied between machines) is not "absolute" to pathlib there and
+        # would resolve as a relative name inside cwd, leaking the username.
+        # It can never be inside a POSIX project root, so it is external.
+        if os.name != "nt" and _WIN_ABS_RE.match(text):
+            return "external"
+        if os.name != "nt":
+            text = text.replace("\\", "/")
         candidate = Path(text)
         base = Path(cwd).resolve()
         # On Windows Path("/etc/passwd").is_absolute() is False; treat any

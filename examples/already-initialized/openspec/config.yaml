@@ -1,0 +1,7 @@
+project: acme-web
+description: Next.js 14 storefront, TypeScript, Prisma/PostgreSQL.
+conventions:
+  language: TypeScript
+  framework: Next.js 14 (App Router)
+  data_layer: Prisma
+  testing: Vitest + Playwright

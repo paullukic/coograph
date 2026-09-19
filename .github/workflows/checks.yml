@@ -16,3 +16,39 @@ jobs:
           python-version: "3.x"
       - name: Run invocation drift check
         run: python .github/scripts/check-invocations.py
+
+  reinit-idempotency:
+    name: re-init fixture stays marker-free
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Run re-init idempotency check
+        run: python .github/scripts/check-reinit-idempotency.py
+
+  plugin-in-sync:
+    name: committed plugin matches sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Check plugin/ and marketplace.json are not stale
+        run: python .github/scripts/build-plugin.py --check
+
+  retro-tests:
+    name: retro unit tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Run tests
+        run: python -m unittest discover -s .github/retro/tests -v
