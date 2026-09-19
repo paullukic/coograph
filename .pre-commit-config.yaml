@@ -3,13 +3,26 @@
 # Run manually:  pre-commit run --all-files
 #
 # Issue #6 will extend this with markdownlint / lychee / SKILL frontmatter format.
-# For now it carries the cross-tool invocation drift check (issue #2).
+# The same checks run in CI (.github/workflows/checks.yml); the Retro unit tests
+# run in CI only because they take a few seconds.
 repos:
   - repo: local
     hooks:
       - id: check-invocations
         name: cross-tool invocation drift check
         entry: python .github/scripts/check-invocations.py
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: check-reinit-idempotency
+        name: re-init fixture stays marker-free
+        entry: python .github/scripts/check-reinit-idempotency.py
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: plugin-in-sync
+        name: committed plugin matches sources
+        entry: python .github/scripts/build-plugin.py --check
         language: system
         pass_filenames: false
         always_run: true

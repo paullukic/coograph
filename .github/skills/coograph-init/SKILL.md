@@ -77,7 +77,7 @@ template" signal — reuse the same invariant Steps 4, 5 and the Guardrails key 
 
 **Classify into one state:**
 - **State A — fresh**: none of the expected coograph files exist.
-  → Full init flow, unchanged. Proceed normally through Steps 2–9.
+  → Full init flow, unchanged. Proceed normally through Steps 2–10.
 - **State B — partial**: some expected files exist, some are missing.
   → Copy ONLY the missing files (Step 3). Do not modify any existing file unless the
     user explicitly confirms overwrite for that specific file.
@@ -87,6 +87,15 @@ template" signal — reuse the same invariant Steps 4, 5 and the Guardrails key 
     not yet installed. Never touch instruction files (`.github/copilot-instructions.md`,
     `CLAUDE.md`, `AGENTS.md`, `openspec/config.yaml`). Skip Step 2 (stack detection) and
     Step 4 (placeholder fill) entirely — see the State-C guards in those steps.
+
+**Template-managed files are exempt from the B and C restrictions.** Files that
+users never customize and that `sync.py` overwrites on every pull are copied
+whenever they are missing, in every state: `.github/skills/`, `.github/agents/`,
+`.claude/commands/coograph-*.md`, `.claude/hooks/`, `.claude/settings.json`, and
+`.github/retro/` (without `rules.json`). This is how a project initialized before a
+template feature existed (for example Retro) receives it on re-init. Step 10 then
+runs when the user enabled Retro in question 7 and `.github/retro/rules.json` is
+absent.
 
 State the detected state to the user before proceeding (e.g. "State C — already
 initialized; entering update mode, instruction files will not be touched").
@@ -189,6 +198,10 @@ project-wide prompt:
   selected in Q2 that are not already installed (e.g. user adds Codex CLI to a
   Claude-Code-only project). Never write instruction files
   (`.github/copilot-instructions.md`, `CLAUDE.md`, `AGENTS.md`, `openspec/config.yaml`).
+- **Every state:** template-managed files listed in Step 1b (skills, agents,
+  `coograph-*` command wrappers, hooks, `settings.json`, `.github/retro/` without
+  `rules.json`) are copied when missing. They are never user-customized, and
+  `sync.py` overwrites them on every pull anyway.
 
 **Per-file overwrite safety** (applies in every state): use the Step 1b signal.
 - A **customized** file (exists, zero markers) SHALL NOT be overwritten without an

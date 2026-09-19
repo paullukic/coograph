@@ -53,7 +53,59 @@ Ask the user these questions one at a time (wait for each answer before proceedi
    - Explain in two lines: "Retro records when the agent breaks a project rule (grep before the code graph, edits outside the approved change, hand-edits to generated files, new dependencies) and what each session costs in tokens, then proposes fixes to the instruction files and hooks as an OpenSpec you approve. It stores tool names, counts, and paths only; no prompt text, code, or output, and nothing leaves the machine."
    - Capture needs Claude Code (transcripts and lifecycle hooks). Other tools get the analyzer and the `/coograph-retro` skill, but no capture. Say this if Claude Code was not selected in question 2.
 
+## Step 1b: Detect Install State (idempotent re-init)
+
+Before copying or filling anything, classify the target so a second run never
+clobbers customized files. Run this immediately after the target path is known.
+
+**Build the "expected files" set:**
+- If the target is registered in the coograph `projects.json`, take its `tools` +
+  `code_graph` entry and expand to the files those tools own (the per-tool lists in
+  Step 3 plus the always-copy block).
+- If the target is NOT in `projects.json`, derive the set from which coograph files
+  already exist on disk (whatever is present defines what "complete" means here).
+- Never hard-fail on a missing or stale `projects.json` — fall back to disk detection.
+
+**Per-file signal** (the `_TBD_` / `<!-- FILL` markers are the only "customized vs
+template" signal — reuse the same invariant Steps 4, 5 and the Guardrails key off):
+- exists + contains `_TBD_` or `<!-- FILL` → **template-untouched** (safe to refill).
+- exists + zero markers → **customized** (do NOT overwrite without explicit "yes
+  overwrite").
+- exists + *some* markers but clearly user-edited elsewhere → treat as **customized**;
+  surface it for an explicit decision, never auto-refill.
+- missing → **copy fresh**.
+
+**Classify into one state:**
+- **State A — fresh**: none of the expected coograph files exist.
+  → Full init flow, unchanged. Proceed normally through Steps 2–10.
+- **State B — partial**: some expected files exist, some are missing.
+  → Copy ONLY the missing files (Step 3). Do not modify any existing file unless the
+    user explicitly confirms overwrite for that specific file.
+- **State C — initialized + customized**: all expected files exist with zero
+  `_TBD_` / `<!-- FILL` markers.
+  → Update mode. Only patch tool-config files for tools newly selected in Q2 that are
+    not yet installed. Never touch instruction files (`.github/copilot-instructions.md`,
+    `CLAUDE.md`, `AGENTS.md`, `openspec/config.yaml`). Skip Step 2 (stack detection) and
+    Step 4 (placeholder fill) entirely — see the State-C guards in those steps.
+
+**Template-managed files are exempt from the B and C restrictions.** Files that
+users never customize and that `sync.py` overwrites on every pull are copied
+whenever they are missing, in every state: `.github/skills/`, `.github/agents/`,
+`.claude/commands/coograph-*.md`, `.claude/hooks/`, `.claude/settings.json`, and
+`.github/retro/` (without `rules.json`). This is how a project initialized before a
+template feature existed (for example Retro) receives it on re-init. Step 10 then
+runs when the user enabled Retro in question 7 and `.github/retro/rules.json` is
+absent.
+
+State the detected state to the user before proceeding (e.g. "State C — already
+initialized; entering update mode, instruction files will not be touched").
+
 ## Step 2: Detect Tech Stack
+
+> **State C skip:** if Step 1b classified the target as State C (initialized +
+> customized), skip this entire step — the instruction files are already filled and
+> will not be touched. Stack detection only feeds placeholder filling (Step 4), which
+> State C also skips.
 
 Investigate the TARGET project to auto-detect as much as possible. Read these files if they exist:
 
@@ -136,7 +188,31 @@ Copy files from the template root (see Template source) to the target project. O
 
 **Multi-tool selections:** copy the union of all selected tool sections plus the always-copy section. Skip duplicate destinations (e.g. `AGENTS.md` is shared between VS Code Copilot, Codex CLI, and OpenCode — copy once). `.github/skills/` is in the always-copy block; do not re-copy it from per-tool selections.
 
-**Do NOT overwrite** existing files without asking. If a file exists, show both versions side by side (existing vs template) and ask the user how to proceed:
+**Apply the Step 1b state before any copy** — decide per file, not with one
+project-wide prompt:
+
+- **State A (fresh):** copy everything per the selections (no existing files to guard).
+- **State B (partial):** copy ONLY the **missing** files. For files that already exist,
+  do not touch them unless the user explicitly says "yes overwrite" for that file.
+- **State C (initialized + customized):** write ONLY tool-config files for tools newly
+  selected in Q2 that are not already installed (e.g. user adds Codex CLI to a
+  Claude-Code-only project). Never write instruction files
+  (`.github/copilot-instructions.md`, `CLAUDE.md`, `AGENTS.md`, `openspec/config.yaml`).
+- **Every state:** template-managed files listed in Step 1b (skills, agents,
+  `coograph-*` command wrappers, hooks, `settings.json`, `.github/retro/` without
+  `rules.json`) are copied when missing. They are never user-customized, and
+  `sync.py` overwrites them on every pull anyway.
+
+**Per-file overwrite safety** (applies in every state): use the Step 1b signal.
+- A **customized** file (exists, zero markers) SHALL NOT be overwritten without an
+  explicit "yes overwrite" confirmation for that file.
+- A **template-untouched** file (exists, has `_TBD_` / `<!-- FILL`) may be refilled
+  normally.
+- A **partially edited** file (some markers, user edits elsewhere) is treated as
+  customized — surface it and ask; never auto-refill.
+
+**When you do ask** (customized file the user might want replaced), show both versions
+side by side (existing vs template) and offer:
 - **Overwrite** — replace entirely with the template version
 - **Skip** — keep the existing file unchanged
 - **Section-by-section** — show each differing section and let the user choose which version to keep for each one
@@ -144,6 +220,13 @@ Copy files from the template root (see Template source) to the target project. O
 Do NOT attempt automatic merging — the risk of duplicated or corrupted content is too high.
 
 ## Step 4: Fill In Placeholders
+
+> **State C skip:** if Step 1b classified the target as State C, skip this entire step.
+> All instruction files are already filled (zero markers by definition) and must not be
+> touched. Only the tool-config files written in Step 3 apply in update mode.
+>
+> **State B note:** fill placeholders only in files that were freshly copied in Step 3.
+> Existing customized files are never refilled.
 
 Using the detected info from Step 2, replace all `_TBD_` placeholders and `<!-- FILL: ... -->` comment blocks in the copied files.
 
