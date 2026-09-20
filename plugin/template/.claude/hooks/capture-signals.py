@@ -97,6 +97,11 @@ class Parsed:
         self.session_id = ""
         self.source_bytes = 0
         self.message_count = 0
+        # Timestamp of the message currently being parsed, stamped onto each
+        # tool use and correction. A violation has to carry the moment it
+        # happened: stamping everything with the session end collapses a
+        # week-long session into one episode and hides its own history.
+        self.at = ""
         self.started = ""
         self.ended = ""
         self.tool_uses: list[dict] = []          # {index,name,sidechain,file,command,skill,id}
@@ -126,6 +131,7 @@ class Parsed:
                     inp = {}
                 self.tool_uses.append({
                     "index": self._next_index,
+                    "ts": self.at,
                     "id": str(block.get("id") or ""),
                     "name": str(block.get("name") or ""),
                     "sidechain": sidechain,
@@ -175,6 +181,9 @@ class Parsed:
                             self.corrections.append({
                                 "pattern": str(pat["id"])[:40],
                                 "after_tool": self._tool_since_user_text,
+                                # Dropped from stored evidence by the
+                                # allow-list; read by detect() for the stamp.
+                                "_ts": self.at,
                             })
                             break
                     except re.error:
@@ -213,6 +222,7 @@ def parse_transcript(path: Path, patterns: list[dict]) -> Parsed | None:
                     parsed.session_id = str(sid)
                 ts = obj.get("timestamp")
                 if isinstance(ts, str) and ts:
+                    parsed.at = ts
                     if not parsed.started or ts < parsed.started:
                         parsed.started = ts
                     if ts > parsed.ended:
@@ -363,11 +373,12 @@ def detect(parsed: Parsed, cwd: Path, rules: dict | None) -> list[dict]:
     records: list[dict] = []
     graph_db_present = (cwd / ".code-graph" / "graph.db").exists()
 
-    def rec(kind: str, rule: str, detector: str, confidence: str, evidence: dict) -> None:
+    def rec(kind: str, rule: str, detector: str, confidence: str, evidence: dict,
+            at: str = "") -> None:
         r = signals.make_record(
             tool=AGENT, session_id=sid, kind=kind, rule=rule, detector=detector,
             confidence=confidence, evidence=evidence, origin="transcript",
-            ts=parsed.ended or None,
+            ts=at or parsed.ended or None,
         )
         if r:
             records.append(r)
@@ -404,7 +415,7 @@ def detect(parsed: Parsed, cwd: Path, rules: dict | None) -> list[dict]:
                 "first_index": early[0]["index"],
                 "tools": sorted({u["name"] for u in early}),
                 "proof": proof,
-            })
+            }, at=early[0].get("ts", ""))
 
     # edited files ------------------------------------------------------
     edited: list[str] = []
@@ -416,6 +427,10 @@ def detect(parsed: Parsed, cwd: Path, rules: dict | None) -> list[dict]:
 
     # openspec-gate (heuristic) -----------------------------------------
     source_edits = [p for p in edited if p != "external" and not p.startswith("openspec/")]
+    last_edit_ts = ""
+    for u in parsed.tool_uses:
+        if u["name"] in EDIT_TOOLS and u["file"]:
+            last_edit_ts = u.get("ts", "") or last_edit_ts
     if (
         len(source_edits) >= 2
         and not _touches_openspec_changes(parsed, cwd)
@@ -424,12 +439,13 @@ def detect(parsed: Parsed, cwd: Path, rules: dict | None) -> list[dict]:
         rec("violation", "openspec-gate", "openspec-gate", "heuristic", {
             "files": source_edits[:20],
             "count": len(source_edits),
-        })
+        }, at=last_edit_ts)
 
     # build-retry -------------------------------------------------------
     runs: Counter = Counter()
     errors: Counter = Counter()
     program_of: dict[str, str] = {}
+    last_run_ts: dict[str, str] = {}
     for u in parsed.tool_uses:
         if u["name"] in SHELL_TOOLS and u["command"]:
             program, digest = signals.command_identity(u["command"])
@@ -437,6 +453,7 @@ def detect(parsed: Parsed, cwd: Path, rules: dict | None) -> list[dict]:
                 continue
             runs[digest] += 1
             program_of[digest] = program
+            last_run_ts[digest] = u.get("ts", "") or last_run_ts.get(digest, "")
             if parsed.results.get(u["id"]):
                 errors[digest] += 1
     for digest, count in runs.items():
@@ -444,14 +461,15 @@ def detect(parsed: Parsed, cwd: Path, rules: dict | None) -> list[dict]:
             rec("event", "none", "build-retry", "deterministic", {
                 "program": program_of[digest], "hash": digest,
                 "runs": count, "errors": errors[digest],
-            })
+            }, at=last_run_ts.get(digest, ""))
 
     # user-correction (heuristic) ----------------------------------------
     # A violation, not a bare event: the analyzer clusters per rule, so a
     # correction recorded against rule "none" could never reach a proposal.
     # Heuristic confidence still means it needs the higher thresholds.
     for c in parsed.corrections:
-        rec("violation", "user-correction", "user-correction", "heuristic", c)
+        rec("violation", "user-correction", "user-correction", "heuristic", c,
+            at=str(c.get("_ts") or ""))
 
     # defect -------------------------------------------------------------
     # Git is the only place a shipped bug is visible: a fix landing on a file
@@ -471,13 +489,13 @@ def detect(parsed: Parsed, cwd: Path, rules: dict | None) -> list[dict]:
             program, _ = signals.command_identity(u["command"])
             rec("violation", "no-new-deps", "new-dependency", "deterministic", {
                 "program": program, "manifest": "", "via": "command",
-            })
+            }, at=u.get("ts", ""))
         elif u["name"] in EDIT_TOOLS and u["file"]:
             name = Path(str(u["file"])).name
             if name in DEP_MANIFESTS:
                 rec("violation", "no-new-deps", "new-dependency", "deterministic", {
                     "program": "", "manifest": signals.rel_path(cwd, u["file"]), "via": "edit",
-                })
+                }, at=u.get("ts", ""))
 
     # session summary ---------------------------------------------------
     tools_used = Counter(u["name"] for u in parsed.tool_uses if u["name"])
