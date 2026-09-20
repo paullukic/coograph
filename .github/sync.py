@@ -104,6 +104,57 @@ def _copy_dir(src: Path, dst: Path, dry_run: bool = False) -> int:
     return count
 
 
+MODELS_BLOCK = """
+# Per-task models (optional, opt-in)
+# Which model each Coograph agent runs on. `unset` means Coograph asks once, on
+# the next ticket, and never again whatever you answer. `off` means every agent
+# inherits your session model and nothing is suggested. `preset` applies the map
+# below. `per-task` suggests a map for each ticket before using it.
+#   /coograph-suggest-multi-models   propose or change a mapping
+#   /coograph-disable-multi-models   turn it off for good
+models:
+  mode: unset          # unset | off | preset | per-task
+  # preset:            # aliases: fable | opus | sonnet | haiku
+  #   explore: haiku
+  #   search: haiku
+  #   verifier: sonnet
+  #   reviewer: opus
+  #   debugger: opus
+  #   planner: opus
+  #   retro: opus
+"""
+
+
+def _seed_models_block(path: Path, prefix: str, dry_run: bool = False) -> int:
+    """Append the opt-in `models` block to an existing openspec/config.yaml.
+
+    config.yaml is in SKIP_FILES because it holds the user's own project
+    context, so a project initialised before this feature would never see the
+    block and could not discover the commands. Appending is safe: the file is
+    YAML, the block is a new top-level key, and an existing `models:` key means
+    the user already has it and nothing is touched.
+    """
+    target = path / "openspec" / "config.yaml"
+    if not target.exists():
+        return 0
+    try:
+        body = target.read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    if "models:" in body:
+        return 0
+    if dry_run:
+        log.info("  %sopenspec/config.yaml  would seed models block", prefix)
+        return 0
+    try:
+        target.write_text(body.rstrip("\n") + "\n" + MODELS_BLOCK, encoding="utf-8")
+    except OSError as e:
+        log.warning("  models block not seeded: %s", e)
+        return 0
+    log.info("  %sopenspec/config.yaml  models block seeded", prefix)
+    return 1
+
+
 def _sync_retro(path: Path, prefix: str, dry_run: bool = False) -> int:
     """Copy .github/retro/ (analyzer + README, never tests/) and merge the
     seeded registry into the project's rules.json without overwriting it."""
@@ -186,6 +237,7 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
     # Retro analyzer + registry: every tool runs the /coograph-retro skill,
     # so this is always-copy too. Capture hooks are Claude-only (below).
     total += _sync_retro(path, prefix, dry_run=dry_run)
+    total += _seed_models_block(path, prefix, dry_run=dry_run)
 
     # Claude Code commands
     if "claude" in tools:
