@@ -108,3 +108,18 @@ Every finding that references specific code **must** include a verbatim quote fr
 - Soft language: "might be a concern" — state the problem directly or drop it.
 
 $ARGUMENTS
+
+## Models
+
+Read the `models` block in `openspec/config.yaml` before delegating. When `mode` is
+`preset` or `per-task`, pass that agent's model on the Agent call; when it is `off`
+or `unset`, pass nothing and let the agent inherit the session model.
+
+End your report with one line naming what ran where, so the setting is visible
+without reading config:
+
+```
+models: reviewer=opus (mapping), explore=haiku (mapping)
+```
+
+Print the footer in every mode. In `off` and `unset` it reads `(inherited)`.
