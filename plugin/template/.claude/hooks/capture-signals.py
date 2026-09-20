@@ -52,7 +52,10 @@ AGENT = "claude-code"
 CATCHUP_MAX_FILES = 20
 CATCHUP_BUDGET_SECONDS = 2.0
 TRANSCRIPT_MAX_BYTES = 200 * 1024 * 1024
-CATCHUP_SOURCES = {"", "startup", "resume"}
+CATCHUP_SOURCES = {"", "startup", "resume", "clear"}
+# /clear and /new start a fresh transcript, leaving the one you just left
+# uncaptured until some later session happens to catch it; both fire here with
+# source "clear", so the catch-up runs then too.
 # Compaction is the only hook event a marathon session fires repeatedly, so it
 # is where a long session gets to report. Capture is idempotent on message
 # count and replaces the session's records, so re-capturing never double-counts.
@@ -677,7 +680,15 @@ def _hook(payload: dict) -> int:
                 capture_one(tpath, cwd, rules, signals.known_sessions(cwd))
         line = signals.status_line(cwd)
         if line:
+            # SessionStart stdout reaches the model and nothing else. The only
+            # channel a user actually sees is stderr with exit 2, which for
+            # SessionStart shows the text and carries on, since this event
+            # cannot be blocked. Reserve it for a line worth interrupting for;
+            # "nothing over threshold" stays quiet in the model's context.
             print(line)
+            if signals.CALL_TO_ACTION in line:
+                print(line, file=sys.stderr)
+                return 2
         return 0
 
     return 0
