@@ -196,7 +196,7 @@ def _path_clusters(records: list[dict]) -> list[dict]:
         paths: list[str] = []
         if r.get("detector") == "scope-warning" and ev.get("path"):
             paths = [str(ev["path"])]
-        elif r.get("detector") == "openspec-gate":
+        elif r.get("detector") in ("openspec-gate", "defect"):
             paths = [str(p) for p in ev.get("files") or []]
         for p in paths:
             if p == "external":

@@ -65,6 +65,7 @@ DEFECT_MAX_SIGNALS = 20
 # A project root that is not a repository usually holds a few: app/, admin/,
 # functions/. Bounded so a directory full of checkouts cannot stall a capture.
 DEFECT_MAX_REPOS = 5
+DEFECT_MAX_FILES = 20
 SKIP_REPO_DIRS = {"node_modules", "dist", "build", "vendor", "__pycache__", "openspec"}
 GIT_TIMEOUT_SECONDS = 5.0
 
@@ -359,8 +360,12 @@ def git_roots(cwd: Path) -> list[tuple[Path, str]]:
 
 
 def _defects_in(root: Path, prefix: str, started: str, lookback_days: int,
-                budget: int) -> list[tuple[str, dict]]:
+                budget: int) -> list[dict]:
     """Defect signals for one repository, at most `budget` of them.
+
+    One signal per fix commit and origin pair, not per file. A fix touching
+    twenty files is one defect, and counting it twenty times would let this
+    rule drown out every other in the report.
 
     The origin has to be the newest non-fix commit *older than the fix*. Taking
     the newest one overall reports a change that landed after the fix as its
@@ -371,30 +376,29 @@ def _defects_in(root: Path, prefix: str, started: str, lookback_days: int,
     if not window:
         return []
     history = _commits(root, f"{lookback_days + 1}.days.ago")
-    found: list[tuple[str, dict]] = []
-    seen: set[tuple[str, str]] = set()
+    found: list[dict] = []
     for i, (sha, subject, paths) in enumerate(history):
         if sha not in window or not FIX_SUBJECT_RE.match(subject):
             continue
+        by_origin: dict[str, list[str]] = {}
         for path in paths:
-            key = (sha, path)
-            if key in seen:
-                continue
             for older_sha, older_subject, older_paths in history[i + 1:]:
                 if FIX_SUBJECT_RE.match(older_subject) or path not in older_paths:
                     continue
-                seen.add(key)
-                full = prefix + path
-                found.append((full, {
-                    "path": full, "fix": sha, "origin": older_sha, "days": lookback_days,
-                }))
+                by_origin.setdefault(older_sha, []).append(prefix + path)
                 break
+        for origin_sha, files in by_origin.items():
+            found.append({
+                "fix": sha, "origin": origin_sha,
+                "files": sorted(files)[:DEFECT_MAX_FILES], "count": len(files),
+                "days": lookback_days,
+            })
             if len(found) >= budget:
                 return found
     return found
 
 
-def detect_defects(cwd: Path, parsed: Parsed, lookback_days: int) -> list[tuple[str, dict]]:
+def detect_defects(cwd: Path, parsed: Parsed, lookback_days: int) -> list[dict]:
     """A fix commit landing on a file a recent non-fix commit touched.
 
     Scoped to the session's own window so a signal is attributable to the work
@@ -403,7 +407,7 @@ def detect_defects(cwd: Path, parsed: Parsed, lookback_days: int) -> list[tuple[
     """
     if not parsed.started:
         return []
-    found: list[tuple[str, dict]] = []
+    found: list[dict] = []
     for root, prefix in git_roots(cwd):
         found.extend(_defects_in(root, prefix, parsed.started, lookback_days,
                                  DEFECT_MAX_SIGNALS - len(found)))
@@ -524,7 +528,7 @@ def detect(parsed: Parsed, cwd: Path, rules: dict | None) -> list[dict]:
         raw = (rules.get("thresholds") or {}).get("defect_lookback_days")
         if isinstance(raw, int) and raw > 0:
             lookback = raw
-    for _path, evidence in detect_defects(cwd, parsed, lookback):
+    for evidence in detect_defects(cwd, parsed, lookback):
         rec("violation", "defect", "defect", "deterministic", evidence)
 
     # new-dependency ----------------------------------------------------
