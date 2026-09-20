@@ -680,15 +680,22 @@ def _hook(payload: dict) -> int:
                 capture_one(tpath, cwd, rules, signals.known_sessions(cwd))
         line = signals.status_line(cwd)
         if line:
-            # SessionStart stdout reaches the model and nothing else. The only
-            # channel a user actually sees is stderr with exit 2, which for
-            # SessionStart shows the text and carries on, since this event
-            # cannot be blocked. Reserve it for a line worth interrupting for;
-            # "nothing over threshold" stays quiet in the model's context.
-            print(line)
+            # Plain stdout from SessionStart reaches the model and nobody else,
+            # so the line the user is meant to act on has to travel as
+            # structured output: `additionalContext` for the model,
+            # `systemMessage` for the terminal. The alternative, exit 2 with
+            # stderr, does reach the user but Claude Code labels it "hook
+            # error", and a nudge that looks like a failure trains people to
+            # ignore it. A quiet report carries no systemMessage.
+            out: dict = {
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": line,
+                },
+            }
             if signals.CALL_TO_ACTION in line:
-                print(line, file=sys.stderr)
-                return 2
+                out["systemMessage"] = line
+            print(json.dumps(out))
         return 0
 
     return 0

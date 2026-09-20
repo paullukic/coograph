@@ -700,15 +700,22 @@ class StatusVisibilityTests(unittest.TestCase):
     def test_call_to_action_reaches_the_user(self) -> None:
         self._over_threshold()
         code, out, err = self._start()
-        self.assertEqual(code, 2, "exit 2 is the only way SessionStart text reaches the terminal")
-        self.assertIn(sig.CALL_TO_ACTION, err)
-        self.assertIn(sig.CALL_TO_ACTION, out, "the model still gets it too")
+        self.assertEqual(code, 0, "no exit 2: that renders as a hook error")
+        self.assertEqual(err, "")
+        payload = json.loads(out)
+        self.assertIn(sig.CALL_TO_ACTION, payload["systemMessage"], "the terminal gets it")
+        self.assertEqual(payload["hookSpecificOutput"]["hookEventName"], "SessionStart")
+        self.assertIn(sig.CALL_TO_ACTION, payload["hookSpecificOutput"]["additionalContext"],
+                      "the model gets it too")
 
     def test_nothing_to_do_stays_quiet(self) -> None:
         code, out, err = self._start()
         self.assertEqual(code, 0)
-        self.assertEqual(err, "", "a quiet report never interrupts the user")
-        self.assertIn("[retro]", out, "the model is still told")
+        self.assertEqual(err, "")
+        payload = json.loads(out)
+        self.assertNotIn("systemMessage", payload, "a quiet report never interrupts the user")
+        self.assertIn("[retro]", payload["hookSpecificOutput"]["additionalContext"],
+                      "the model is still told")
 
     def test_clear_catches_up_the_session_you_just_left(self) -> None:
         sibling = Transcript("left-behind")
