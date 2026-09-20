@@ -131,7 +131,7 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(data["last_retro"]["captured_sessions"], 3)
         self.assertTrue(data["last_retro"]["date"].endswith("Z"))
         proc = _run_retro(self.root, "--status")
-        self.assertIn("1 sessions since last retro", proc.stdout)  # only m2 started after m1
+        self.assertIn("1 episodes since last retro", proc.stdout)  # only m2 started after m1
 
     def test_analyzer_works_without_claude_hooks(self) -> None:
         """A project set up for a tool other than Claude Code has no .claude/hooks."""
@@ -173,14 +173,14 @@ class StatusTests(unittest.TestCase):
             _session(root, f"s{i}", f"2026-09-0{i + 1}")
         proc = _run_retro(root, "--status")
         self.assertEqual(proc.returncode, 0, proc.stdout)
-        self.assertEqual(proc.stdout.strip(), "retro: 3 sessions since last retro (never); threshold 3")
+        self.assertEqual(proc.stdout.strip(), "retro: 3 episodes since last retro (never); threshold 3")
         rules_path = root / ".github" / "retro" / "rules.json"
         data = json.loads(rules_path.read_text())
         data["last_retro"] = {"date": "2026-09-05", "session_id": "s2", "captured_sessions": 3}
         rules_path.write_text(json.dumps(data))
         proc = _run_retro(root, "--status")
         self.assertEqual(proc.returncode, 3)
-        self.assertIn("0 sessions since last retro (2026-09-05)", proc.stdout)
+        self.assertIn("0 episodes since last retro (2026-09-05)", proc.stdout)
 
 
 class ReportTests(unittest.TestCase):

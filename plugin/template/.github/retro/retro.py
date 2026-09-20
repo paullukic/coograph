@@ -572,7 +572,7 @@ def cmd_status(cwd: Path, sig) -> int:
     m = int(rules["thresholds"]["retro_prompt_min_sessions"])
     last = rules.get("last_retro")
     when = last["date"] if last else "never"
-    print(f"retro: {n} sessions since last retro ({when}); threshold {m}")
+    print(f"retro: {n} episodes since last retro ({when}); threshold {m}")
     return 0 if n >= m else 3
 
 
