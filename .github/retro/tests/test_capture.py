@@ -674,6 +674,61 @@ class HookModeTests(unittest.TestCase):
         self.assertEqual(not_a_commit.returncode, 0)
 
 
+class HookEmissionRulesTests(unittest.TestCase):
+    """A hook may only record a signal for a rule nothing else observes.
+
+    Rules with a transcript detector are already counted by capture-signals.py.
+    A hook that records the same violation is counted twice: replace_session
+    keeps hook-origin records, summarize counts every violation equally, and
+    retro.py never reads `origin`. The rule then escalates on its own warnings,
+    and the rung after hook-warn is hook-block.
+    """
+
+    HOOKS = Path(__file__).resolve().parents[3] / ".claude" / "hooks"
+    SEED = Path(__file__).resolve().parents[1] / "rules.seed.json"
+
+    def _transcript_detected_rules(self) -> set[str]:
+        """Rules capture-signals.py records from the transcript."""
+        source = (self.HOOKS / "capture-signals.py").read_text(encoding="utf-8")
+        seed = json.loads(self.SEED.read_text(encoding="utf-8"))
+        rules = seed["rules"] if isinstance(seed, dict) else seed
+        detected = set()
+        for rule in rules:
+            detector = rule.get("detector")
+            if not detector:
+                continue
+            # hook-emitted detectors are named in the hook that emits them, not in a rec() call
+            if f'rec("violation", "{rule["id"]}"' in source or f"'{detector}'" in source and f'"{detector}"' in source:
+                if f'rec("violation", "{rule["id"]}"' in source:
+                    detected.add(rule["id"])
+        return detected
+
+    def test_no_hook_emits_for_a_transcript_detected_rule(self) -> None:
+        detected = self._transcript_detected_rules()
+        self.assertTrue(detected, "expected capture-signals.py to record some rules")
+
+        offenders = []
+        for hook in sorted(self.HOOKS.glob("*-warn.py")) + sorted(self.HOOKS.glob("block-*.py")):
+            source = hook.read_text(encoding="utf-8")
+            if "signals.emit" not in source:
+                continue
+            for rule in detected:
+                if f'rule="{rule}"' in source or f"rule='{rule}'" in source:
+                    offenders.append(f"{hook.name} emits for '{rule}', which has a transcript detector")
+
+        self.assertEqual(
+            offenders, [],
+            "a hook may not record a rule that capture-signals.py already records "
+            "(see coograph-retro SKILL.md Step 2, rule 6): " + "; ".join(offenders),
+        )
+
+    def test_hook_only_rules_still_emit(self) -> None:
+        """scope and generated-files have no transcript detector, so their hooks must emit."""
+        for hook_name, rule in (("warn-scope.py", "scope"), ("block-generated.py", "generated-files")):
+            source = (self.HOOKS / hook_name).read_text(encoding="utf-8")
+            self.assertIn("signals.emit", source, f"{hook_name} should still record {rule}")
+
+
 class CompactCaptureTests(unittest.TestCase):
     """A session that never ends still has to report."""
 
