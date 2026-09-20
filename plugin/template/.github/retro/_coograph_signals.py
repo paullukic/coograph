@@ -608,6 +608,11 @@ def transcripts_dir_for(cwd: Path) -> Path | None:
         return None
 
 
+# The words that mean "there is something for you to do". The hook tests for
+# this to decide whether the line is worth putting in front of the user.
+CALL_TO_ACTION = "run /coograph-retro"
+
+
 def status_line(cwd: Path) -> str | None:
     """One line for SessionStart, or None when there is nothing to say."""
     rules = load_rules(cwd)
@@ -616,7 +621,7 @@ def status_line(cwd: Path) -> str | None:
         if archives >= DEFAULT_BOOTSTRAP_MIN_ARCHIVES:
             return (
                 f"[retro] not enabled, {archives} archived changes found, "
-                "run /coograph-retro to bootstrap"
+                f"{CALL_TO_ACTION} to bootstrap"
             )
         return None
     records = load(cwd)
@@ -628,7 +633,7 @@ def status_line(cwd: Path) -> str | None:
     if not over:
         return f"[retro] {n} sessions captured, nothing over threshold"
     top = over[0]
-    call = ", run /coograph-retro"
+    call = f", {CALL_TO_ACTION}"
     head = f"[retro] {n} sessions captured, {len(over)} rules over threshold ({top['id']} {top['events']}x)"
     # Never truncate the call to action; shorten the rule part instead.
     return head[: 160 - len(call)] + call

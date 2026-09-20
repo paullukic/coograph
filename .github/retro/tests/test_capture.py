@@ -6,6 +6,7 @@ Run:  python -m unittest discover .github/retro/tests
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -14,6 +15,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from fixtures import HOOKS, SEED, SENTINEL, Transcript, make_project, read_signals
@@ -652,6 +654,69 @@ class CompactCaptureTests(unittest.TestCase):
         path = self._transcript("live-4", 2)
         self._hook("compact", path)
         self.assertEqual(read_signals(self.root), [])
+
+
+class StatusVisibilityTests(unittest.TestCase):
+    """SessionStart stdout only reaches the model; stderr with exit 2 reaches the user."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = make_project(Path(self.tmp.name) / "proj")
+        self.tdir = Path(self.tmp.name) / "transcripts"
+        self.tdir.mkdir()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _start(self, source: str = "startup") -> tuple[int, str, str]:
+        t = Transcript("vis")
+        t.result(t.tool("Edit", file_path=str(self.root / "src" / "a.ts")))
+        path = t.write(self.tdir / "vis.jsonl")
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cap._hook({
+                "hook_event_name": "SessionStart", "source": source,
+                "transcript_path": str(path), "cwd": str(self.root),
+            })
+        return code, out.getvalue(), err.getvalue()
+
+    def _over_threshold(self) -> None:
+        recs = [
+            sig.make_record(
+                tool="claude-code", session_id="past", kind="violation", rule="graph-first",
+                detector="graph-first", confidence="deterministic", origin="transcript",
+                ts=f"2026-09-0{d}T10:00:00Z",
+                evidence={"count": 1, "first_index": 0, "tools": ["Grep"], "proof": "mcp-later"},
+            )
+            for d in (1, 2, 3)
+        ]
+        recs.append(sig.make_record(
+            tool="claude-code", session_id="past", kind="session", rule="none", detector="session",
+            confidence="deterministic", origin="transcript", ts="2026-09-03T10:00:00Z",
+            evidence={"message_count": 5, "started": "2026-09-01T10:00:00Z", "ended": "2026-09-03T10:00:00Z"},
+        ))
+        sig.replace_session(self.root, "past", recs)
+
+    def test_call_to_action_reaches_the_user(self) -> None:
+        self._over_threshold()
+        code, out, err = self._start()
+        self.assertEqual(code, 2, "exit 2 is the only way SessionStart text reaches the terminal")
+        self.assertIn(sig.CALL_TO_ACTION, err)
+        self.assertIn(sig.CALL_TO_ACTION, out, "the model still gets it too")
+
+    def test_nothing_to_do_stays_quiet(self) -> None:
+        code, out, err = self._start()
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "", "a quiet report never interrupts the user")
+        self.assertIn("[retro]", out, "the model is still told")
+
+    def test_clear_catches_up_the_session_you_just_left(self) -> None:
+        sibling = Transcript("left-behind")
+        sibling.result(sibling.tool("Bash", command="npm install left-pad"))
+        sibling.write(self.tdir / "left-behind.jsonl")
+        self._start(source="clear")
+        sids = {r["session_id"] for r in read_signals(self.root)}
+        self.assertIn("left-behind", sids)
 
 
 class DefectDetectorTests(unittest.TestCase):
