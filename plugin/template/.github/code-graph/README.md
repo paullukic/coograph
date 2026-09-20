@@ -95,7 +95,7 @@ python .github/code-graph/server.py
 | `get_impact_radius` | Blast radius analysis for a set of files, with per-file BFS distance |
 | `get_review_context` | Ranked review file set with token estimates; optional `budget_tokens` cap |
 | `query_graph` | Flexible queries: importers, dependencies, calls, tests |
-| `get_minimal_context` | Quick health check + task-relevant risk assessment |
+| `get_minimal_context` | **Call first.** Resolves the symbols named in the task and returns `files_to_read` (defining files, their dependencies, then one tier of dependents; max 6) plus graph health and the next tool to use. Empty list always carries a `files_reason` |
 | `find_large_functions` | Find functions/methods exceeding a line threshold |
 | `visualize_graph` | Generate HTML visualization |
 

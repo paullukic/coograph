@@ -16,6 +16,7 @@ Requirements:
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -170,6 +171,203 @@ def _approx_tokens(rel_path: str) -> int:
         return 0
 
 
+# Words that carry no symbol information in a task description. Kept small on
+# purpose: a stopword list that grows starts eating real identifiers.
+_TASK_STOPWORDS = frozenset("""
+add fix the and for with from into that this then than but not out off new old
+use using update change make made set get put run call called calls when what
+why how where which while should would could must need needs want wants
+bug bugs issue issues error errors feature support handle handling
+code file files function method class test tests line lines
+""".split())
+
+_NON_IDENT = re.compile(r"[^A-Za-z0-9_]+")
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+# Node kinds that represent a definition worth seeding from.
+_DEF_KINDS = ("function", "method", "class", "interface", "enum")
+
+# Ceilings. The point of this tool is to be the cheap first call, so every
+# widening step is bounded and the caller is told which tool to use to go wider.
+_MAX_SEEDS = 3
+_MAX_FILES = 6
+_FORWARD_DEPTH = 2
+
+
+def _identifiers(task: str) -> list[str]:
+    """Candidate symbol names in a task string, longest first.
+
+    Splits on non-identifier characters, then again on camelCase and snake_case
+    boundaries, keeping the whole identifier as well as its parts so that
+    "OrderService.place_order()" yields place_order before order.
+    """
+    seen: dict[str, None] = {}
+    for raw in _NON_IDENT.split(task):
+        if not raw:
+            continue
+        parts = [raw]
+        parts.extend(_CAMEL_BOUNDARY.sub(" ", raw).split())
+        parts.extend(raw.split("_"))
+        for part in parts:
+            token = part.strip().lower()
+            if len(token) >= 3 and token not in _TASK_STOPWORDS:
+                seen.setdefault(token, None)
+    # Longest first so a specific name outranks the generic word inside it.
+    return sorted(seen, key=lambda t: (-len(t), t))
+
+
+def _file_id(conn: sqlite3.Connection, file: str) -> str | None:
+    row = conn.execute(
+        "SELECT id FROM nodes WHERE file=? AND kind='file'", (file,)
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _is_test_file(conn: sqlite3.Connection, file: str, file_id: str | None) -> bool:
+    """True when this file tests something else.
+
+    Prefers the graph: a tests_for edge has the test file as src. Falls back to
+    the path for repositories whose parsers emit no tests_for edges.
+    """
+    if file_id is not None:
+        row = conn.execute(
+            "SELECT 1 FROM edges WHERE src=? AND kind='tests_for' LIMIT 1", (file_id,)
+        ).fetchone()
+        if row:
+            return True
+    lowered = "/" + file.replace("\\", "/").lower()
+    if "/test/" in lowered or "/tests/" in lowered or "/__tests__/" in lowered:
+        return True
+    name = lowered.rsplit("/", 1)[-1]
+    return name.startswith("test_") or ".test." in name or ".spec." in name
+
+
+def _resolve_seeds(conn: sqlite3.Connection, task: str) -> tuple[list[str], str]:
+    """Map a task description onto the files most likely to define it.
+
+    Returns (files, reason). An empty file list always carries a reason, since
+    a tool that silently returns nothing is indistinguishable from one that was
+    never wired up.
+    """
+    identifiers = _identifiers(task)
+    if not identifiers:
+        return [], "no usable identifier in the task description"
+
+    # (-len(identifier), tier, is_test, file) — deterministic for a given graph.
+    # Identifier specificity outranks match tier: "SearchSuggest" matching a
+    # file name must beat "search" prefix-matching a function, or a task about
+    # a Svelte component resolves to whatever else shares its first six letters.
+    candidates: list[tuple[int, int, int, str]] = []
+    for ident in identifiers:
+        rows = conn.execute(
+            "SELECT DISTINCT file FROM nodes "
+            f"WHERE kind IN ({','.join('?' * len(_DEF_KINDS))}) AND LOWER(name)=?",
+            (*_DEF_KINDS, ident),
+        ).fetchall()
+        tier = 0
+        if not rows:
+            rows = conn.execute(
+                "SELECT DISTINCT file FROM nodes "
+                f"WHERE kind IN ({','.join('?' * len(_DEF_KINDS))}) "
+                "AND LOWER(name) LIKE ? LIMIT 20",
+                (*_DEF_KINDS, ident + "%"),
+            ).fetchall()
+            tier = 1
+        if not rows:
+            rows = conn.execute(
+                "SELECT DISTINCT file FROM nodes WHERE kind='file' "
+                "AND (LOWER(file) LIKE ? OR LOWER(file) LIKE ?) LIMIT 20",
+                (ident + ".%", "%/" + ident + ".%"),
+            ).fetchall()
+            tier = 2
+        for (file,) in rows:
+            is_test = 1 if _is_test_file(conn, file, _file_id(conn, file)) else 0
+            candidates.append((-len(ident), tier, is_test, file))
+
+    if not candidates:
+        return [], "no symbol or file in the task matched the graph"
+
+    candidates.sort()
+    # Strongest signal wins outright, in this order: the most specific
+    # identifier in the task, then exact match over prefix over file name, then
+    # a definition over a test. "service" exact-matches a pytest fixture in
+    # tests/test_order_service.py, which would otherwise seed the walk from the
+    # test and invert the whole result.
+    best_ident, best_tier = candidates[0][0], candidates[0][1]
+    candidates = [c for c in candidates if c[0] == best_ident and c[1] == best_tier]
+    if any(c[2] == 0 for c in candidates):
+        candidates = [c for c in candidates if c[2] == 0]
+
+    seeds: list[str] = []
+    for _, _, _, file in candidates:
+        if file not in seeds:
+            seeds.append(file)
+        if len(seeds) >= _MAX_SEEDS:
+            break
+
+    # An exact symbol match is an answer. A prefix or a file-name match is a
+    # guess, and a caller that cannot tell them apart will trust both equally.
+    notes: list[str] = []
+    if -best_ident < len(identifiers[0]):
+        # The most specific thing named in the task is absent from the graph,
+        # so this answer comes from a broader word in the same sentence. Often
+        # it means the parser does not cover that file type at all.
+        notes.append(
+            f"{identifiers[0]!r} is not in the graph; matched on "
+            f"{-best_ident}-character fallback"
+        )
+    if best_tier == 1:
+        notes.append("name prefix, not an exact symbol")
+    elif best_tier == 2:
+        notes.append("file name, no symbol")
+    return seeds, "; ".join(notes)
+
+
+def _dependencies_of(
+    files: list[str], max_depth: int = _FORWARD_DEPTH
+) -> tuple[list[str], dict[str, int]]:
+    """BFS forward through depends_on: what these files need.
+
+    The mirror of _impact_radius_internal, which walks the same edges backwards
+    to answer what would break. "Which files do I have to read" is mostly this
+    direction; on the sample-app fixture, forward from order_service.py gives
+    three files and backward gives ten, four of them tests.
+    """
+    conn = _conn()
+
+    seed_ids: dict[str, str] = {}
+    for f in files:
+        row = conn.execute(
+            "SELECT id FROM nodes WHERE file=? AND kind='file'", (f,)
+        ).fetchone()
+        if row:
+            seed_ids[row[0]] = f
+
+    visited: set[str] = set(seed_ids)
+    queue: list[tuple[str, int]] = [(nid, 0) for nid in seed_ids]
+    found: dict[str, int] = {}
+
+    while queue:
+        node_id, depth = queue.pop(0)
+        if depth >= max_depth:
+            continue
+        for (dep_id,) in conn.execute(
+            "SELECT dst FROM edges WHERE src=? AND kind='depends_on'", (node_id,)
+        ):
+            if dep_id in visited:
+                continue
+            visited.add(dep_id)
+            row = conn.execute(
+                "SELECT file FROM nodes WHERE id=?", (dep_id,)
+            ).fetchone()
+            if row and row[0] not in files:
+                found.setdefault(row[0], depth + 1)
+            queue.append((dep_id, depth + 1))
+
+    conn.close()
+    return sorted(found, key=lambda f: (found[f], f)), found
+
+
 def _risk_score_file(conn: sqlite3.Connection, file: str) -> float:
     """Compute risk score (0.0–1.0) for a single file."""
     risk = 0.0
@@ -204,6 +402,62 @@ def _risk_score_file(conn: sqlite3.Connection, file: str) -> float:
     risk += min(caller_count * 0.02, 0.2)
 
     return round(min(risk, 1.0), 3)
+
+
+def _assemble_context(
+    conn: sqlite3.Connection, seeds: list[str]
+) -> tuple[list[str], dict[str, int]]:
+    """Seeds, then what they depend on, then one tier of what depends on them.
+
+    Ranked with the same order get_review_context uses — distance ascending,
+    files missing on disk last, risk descending, path — and capped at
+    _MAX_FILES. Returns (ranked, forward_distances) so the caller can tell an
+    isolated seed from one with real edges.
+    """
+    forward, forward_distances = _dependencies_of(seeds)
+
+    # Multi-project checkouts (app/ beside admin/) produce cross-tree edges that
+    # are real but almost never what the task is about. Same tree first.
+    seed_trees = {f.replace("\\", "/").split("/", 1)[0] for f in seeds}
+
+    def _same_tree(file: str) -> int:
+        return 0 if file.replace("\\", "/").split("/", 1)[0] in seed_trees else 1
+
+    ranked: list[str] = list(seeds)
+    seen = set(seeds)
+
+    def _rank(files: list[str], distances: dict[str, int]) -> list[str]:
+        scored = sorted(files, key=lambda f: (distances.get(f, 1 << 30), f))
+        risks = {f: _risk_score_file(conn, f) for f in scored[:20]}
+        tests = {f: _is_test_file(conn, f, _file_id(conn, f)) for f in scored}
+        return sorted(scored, key=lambda f: (
+            _same_tree(f),
+            1 if tests[f] else 0,
+            distances.get(f, 1 << 30),
+            1 if _approx_tokens(f) == 0 else 0,
+            -risks.get(f, 0.0),
+            f,
+        ))
+
+    for f in _rank([f for f in forward if f not in seen], forward_distances):
+        if len(ranked) >= _MAX_FILES:
+            return ranked, forward_distances
+        ranked.append(f)
+        seen.add(f)
+
+    if len(ranked) < _MAX_FILES:
+        affected, _, back_distances = _impact_radius_internal(seeds)
+        dependents = [
+            f for f in affected
+            if f not in seen and back_distances.get(f, 0) == 1
+        ]
+        for f in _rank(dependents, back_distances):
+            if len(ranked) >= _MAX_FILES:
+                break
+            ranked.append(f)
+            seen.add(f)
+
+    return ranked, forward_distances
 
 
 # ---------------------------------------------------------------------------
@@ -523,11 +777,20 @@ def query_graph(pattern: str, node_name: str) -> list[dict]:
 def get_minimal_context(task: str = "") -> dict:
     """Ultra-compact entry point — call this FIRST before any other graph tool.
 
-    Returns graph stats, overall risk of uncommitted changes, and suggested
-    next tools based on task description. Keeps output under ~150 tokens.
+    Resolves the symbols named in `task` against the graph and returns
+    files_to_read: the defining files, then what they depend on, then one tier
+    of what depends on them, ranked and capped at 6. Also returns graph stats,
+    the risk of the uncommitted changes, and which tool to reach for next.
+    Keeps output under ~150 tokens, which is why there is no per-file token
+    map — pass files_to_read to get_review_context for that and for more files.
+
+    files_to_read is empty whenever the task names nothing the graph knows, or
+    the graph holds no dependency edges for what it matched; files_reason says
+    which. An empty list is a real answer, not a failure.
 
     Args:
-        task: What you are doing (e.g. "review PR #42", "debug login timeout").
+        task: What you are doing (e.g. "add caching to OrderService.place_order()",
+            "review PR #42", "debug login timeout").
     """
     conn = _conn()
     stats = {
@@ -567,6 +830,20 @@ def get_minimal_context(task: str = "") -> dict:
         else:
             risk = "low"
 
+    # Resolve the task onto files while the connection is open.
+    files_to_read: list[str] = []
+    files_reason = "no task given"
+    if task.strip():
+        seeds, files_reason = _resolve_seeds(conn, task)
+        if seeds:
+            files_to_read, forward_distances = _assemble_context(conn, seeds)
+            if len(files_to_read) == len(seeds) and not forward_distances:
+                no_edges = ("matched the task but the graph holds no dependency "
+                            "edges for those files")
+                files_reason = (
+                    f"{files_reason}; {no_edges}" if files_reason else no_edges
+                )
+
     conn.close()
 
     # Suggest tools based on task keywords
@@ -584,6 +861,8 @@ def get_minimal_context(task: str = "") -> dict:
         "stats": stats,
         "uncommitted_risk": risk,
         "changed_file_count": len(changed),
+        "files_to_read": files_to_read,
+        "files_reason": files_reason,
         "next_tool_suggestions": suggestions,
     }
 
