@@ -666,21 +666,22 @@ class DefectDetectorTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def _git(self, *args: str) -> None:
-        subprocess.run(["git", *args], cwd=str(self.root), capture_output=True, text=True, check=False)
+    def _git(self, root: Path, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=str(root), capture_output=True, text=True, check=False)
 
-    def _repo(self) -> None:
-        self._git("init", "-q")
-        self._git("config", "user.email", "t@example.com")
-        self._git("config", "user.name", "t")
-        self._git("config", "commit.gpgsign", "false")
+    def _repo(self, root: Path | None = None) -> None:
+        root = root or self.root
+        self._git(root, "init", "-q")
+        self._git(root, "config", "user.email", "t@example.com")
+        self._git(root, "config", "user.name", "t")
+        self._git(root, "config", "commit.gpgsign", "false")
 
-    def _commit(self, path: str, subject: str, body: str = "x") -> None:
-        target = self.root / path
+    def _commit(self, root: Path, path: str, subject: str, body: str = "x") -> None:
+        target = root / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(body, encoding="utf-8")
-        self._git("add", path)
-        self._git("commit", "-q", "-m", subject)
+        self._git(root, "add", path)
+        self._git(root, "commit", "-q", "-m", subject)
 
     def _parsed(self, sid: str = "g1"):
         t = Transcript(sid)
@@ -691,8 +692,8 @@ class DefectDetectorTests(unittest.TestCase):
 
     def test_fix_after_feature_is_a_defect(self) -> None:
         self._repo()
-        self._commit("src/thing.ts", "feat: add thing")
-        self._commit("src/thing.ts", "fix(thing): wrong region", body="y")
+        self._commit(self.root, "src/thing.ts", "feat: add thing")
+        self._commit(self.root, "src/thing.ts", "fix(thing): wrong region", body="y")
         parsed = self._parsed()
         parsed.started = "1970-01-01T00:00:00Z"  # whole history in window
         found = cap.detect_defects(self.root, parsed, 14)
@@ -703,16 +704,16 @@ class DefectDetectorTests(unittest.TestCase):
 
     def test_fix_on_a_file_no_feature_touched_is_not(self) -> None:
         self._repo()
-        self._commit("src/other.ts", "feat: add other")
-        self._commit("src/fresh.ts", "fix: unrelated")
+        self._commit(self.root, "src/other.ts", "feat: add other")
+        self._commit(self.root, "src/fresh.ts", "fix: unrelated")
         parsed = self._parsed()
         parsed.started = "1970-01-01T00:00:00Z"
         self.assertEqual(cap.detect_defects(self.root, parsed, 14), [])
 
     def test_feature_only_history_is_not(self) -> None:
         self._repo()
-        self._commit("src/a.ts", "feat: one")
-        self._commit("src/a.ts", "feat: two", body="y")
+        self._commit(self.root, "src/a.ts", "feat: one")
+        self._commit(self.root, "src/a.ts", "feat: two", body="y")
         parsed = self._parsed()
         parsed.started = "1970-01-01T00:00:00Z"
         self.assertEqual(cap.detect_defects(self.root, parsed, 14), [])
@@ -722,10 +723,67 @@ class DefectDetectorTests(unittest.TestCase):
         parsed.started = "1970-01-01T00:00:00Z"
         self.assertEqual(cap.detect_defects(self.root, parsed, 14), [])
 
+    def test_origin_must_predate_the_fix(self) -> None:
+        """A change that landed after the fix cannot be its cause."""
+        self._repo(self.root)
+        self._commit(self.root, "src/thing.ts", "feat: first", body="1")
+        self._commit(self.root, "src/thing.ts", "fix: the bug", body="2")
+        self._commit(self.root, "src/thing.ts", "feat: later work", body="3")
+        head = subprocess.run(["git", "log", "--pretty=%h", "-n", "3"], cwd=str(self.root),
+                              capture_output=True, text=True).stdout.split()
+        newest, _fix, oldest = head  # log is newest first
+        parsed = self._parsed()
+        parsed.started = "1970-01-01T00:00:00Z"
+        found = cap.detect_defects(self.root, parsed, 14)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0][1]["origin"], oldest)
+        self.assertNotEqual(found[0][1]["origin"], newest)
+
+    def test_subrepos_when_the_root_is_not_one(self) -> None:
+        """gastarbajter's shape: the project root holds app/ and admin/."""
+        for name in ("app", "admin"):
+            sub = self.root / name
+            sub.mkdir(parents=True, exist_ok=True)
+            self._repo(sub)
+            self._commit(sub, "src/thing.ts", "feat: add thing")
+            self._commit(sub, "src/thing.ts", f"fix({name}): broke it", body="y")
+        parsed = self._parsed()
+        parsed.started = "1970-01-01T00:00:00Z"
+        found = cap.detect_defects(self.root, parsed, 14)
+        paths = sorted(e["path"] for _p, e in found)
+        self.assertEqual(paths, ["admin/src/thing.ts", "app/src/thing.ts"],
+                         "paths carry the sub-repo so they stay project-relative")
+
+    def test_root_repo_wins_over_subrepos(self) -> None:
+        self._repo(self.root)
+        self._commit(self.root, "src/a.ts", "feat: a")
+        self._commit(self.root, "src/a.ts", "fix: a", body="y")
+        sub = self.root / "app"
+        sub.mkdir(parents=True, exist_ok=True)
+        self._repo(sub)
+        self._commit(sub, "src/b.ts", "feat: b")
+        self._commit(sub, "src/b.ts", "fix: b", body="y")
+        self.assertEqual(cap.git_roots(self.root), [(self.root, "")])
+        parsed = self._parsed()
+        parsed.started = "1970-01-01T00:00:00Z"
+        paths = sorted(e["path"] for _p, e in cap.detect_defects(self.root, parsed, 14))
+        self.assertEqual(paths, ["src/a.ts"])
+
+    def test_subrepo_scan_is_bounded(self) -> None:
+        for i in range(cap.DEFECT_MAX_REPOS + 3):
+            sub = self.root / f"r{i}"
+            sub.mkdir(parents=True, exist_ok=True)
+            self._repo(sub)
+        self.assertEqual(len(cap.git_roots(self.root)), cap.DEFECT_MAX_REPOS)
+
+    def test_no_repo_anywhere_is_silent(self) -> None:
+        (self.root / "plain").mkdir(parents=True, exist_ok=True)
+        self.assertEqual(cap.git_roots(self.root), [])
+
     def test_no_session_start_means_no_window(self) -> None:
         self._repo()
-        self._commit("src/thing.ts", "feat: add thing")
-        self._commit("src/thing.ts", "fix: broke it", body="y")
+        self._commit(self.root, "src/thing.ts", "feat: add thing")
+        self._commit(self.root, "src/thing.ts", "fix: broke it", body="y")
         parsed = self._parsed()
         parsed.started = ""
         self.assertEqual(cap.detect_defects(self.root, parsed, 14), [])
