@@ -269,7 +269,8 @@ def _load_path_aliases(root: Path) -> list[tuple[str, str]]:
 # ---------------------------------------------------------------------------
 
 # Extensions to try when resolving TS/JS imports (import './foo' -> foo.ts, foo.tsx, etc.)
-_JS_RESOLVE_EXTS = (".ts", ".tsx", ".js", ".jsx", ".css", ".scss", ".less", ".json")
+_JS_RESOLVE_EXTS = (".ts", ".tsx", ".js", ".jsx", ".svelte", ".vue",
+                    ".css", ".scss", ".less", ".json")
 
 
 def _resolve_file_deps(conn: sqlite3.Connection, root: Path) -> None:

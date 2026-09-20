@@ -125,17 +125,31 @@ def detect_stack(root: Path) -> set[str]:
         stacks.add("python")
 
     # -- JavaScript / TypeScript ecosystems --
-    pkg_json = root / "package.json"
-    if pkg_json.exists():
+    # A checkout holding app/ beside admin/ has no root package.json, so
+    # reading only the root leaves a whole SvelteKit project undetected.
+    # Immediate subdirectories are checked too, one level, no deeper.
+    manifests = [root / "package.json"]
+    try:
+        manifests += sorted(
+            d / "package.json"
+            for d in root.iterdir()
+            if d.is_dir() and not d.name.startswith(".") and d.name != "node_modules"
+        )
+    except OSError:
+        pass
+
+    all_deps: set[str] = set()
+    for pkg_json in manifests:
+        if not pkg_json.exists():
+            continue
         try:
             pkg = json.loads(pkg_json.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            pkg = {}
-
-        all_deps = set()
+            continue
         for key in ("dependencies", "devDependencies", "peerDependencies"):
             all_deps |= set(pkg.get(key, {}).keys())
 
+    if all_deps:
         # React (includes Next.js, Remix, Gatsby)
         if all_deps & {"react", "react-dom", "next", "remix", "gatsby",
                        "@remix-run/react", "preact"}:
@@ -202,9 +216,13 @@ def detect_stack(root: Path) -> set[str]:
     if _any_exist(root, "pubspec.yaml", "pubspec.lock"):
         stacks.add("dart")
 
-    # -- Fallback: scan for file extensions if no manifests found --
-    if not stacks - {"structured"}:
-        stacks |= _detect_by_extensions(root)
+    # -- Extensions, always --
+    # This used to run only when no manifest was found at all. In a checkout
+    # holding app/ beside admin/, detecting svelte from a sub-manifest then
+    # suppressed it, and the Python scripts and .ts files alongside lost their
+    # parsers. Merging is strictly more coverage: every parser claims only its
+    # own extensions, and get_parsers resolves overlaps by priority.
+    stacks |= _detect_by_extensions(root)
 
     return stacks
 
@@ -255,7 +273,13 @@ def _detect_by_extensions(root: Path) -> set[str]:
         stacks.add("swift")
     if ext_counts.get(".dart", 0) > 0:
         stacks.add("dart")
+    if ext_counts.get(".svelte", 0) > 0:
+        stacks.add("svelte")
+    if ext_counts.get(".vue", 0) > 0:
+        stacks.add("vue")
     if any(ext_counts.get(e, 0) > 0 for e in (".ts", ".tsx", ".js", ".jsx")):
+        # Also covers the .ts/.js files beside a component project; the
+        # component parsers only claim their own extension.
         stacks.add("react")
     if any(ext_counts.get(e, 0) > 0 for e in (".css", ".scss", ".less")):
         stacks.add("css")
