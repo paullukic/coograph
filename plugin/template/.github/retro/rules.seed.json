@@ -62,10 +62,10 @@
       "id": "no-new-deps",
       "title": "No new dependencies without explicit user approval",
       "source": {
-        "file": "CLAUDE.md",
-        "anchor": "Critical Rules"
+        "file": ".claude/hooks/no-new-deps-warn.py",
+        "anchor": "no-new-deps-warn"
       },
-      "enforcement": "prose",
+      "enforcement": "hook-warn",
       "hard": false,
       "detector": "new-dependency",
       "added": "2026-09-19",
@@ -104,10 +104,10 @@
       "id": "defect",
       "title": "A fix commit landing on a file a recent change touched: the guardrails missed a defect",
       "source": {
-        "file": ".github/copilot-instructions.md",
-        "anchor": "Workflow"
+        "file": ".claude/hooks/defect-warn.py",
+        "anchor": "defect-warn"
       },
-      "enforcement": "prose",
+      "enforcement": "hook-warn",
       "hard": false,
       "detector": "defect",
       "added": "2026-09-20",

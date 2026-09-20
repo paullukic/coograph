@@ -171,3 +171,12 @@ instruction-layer version: the system observes its own failures and
 proposes changes to its own scaffolding, with a human at the gate.
 Whether rules keep improving over many cycles is unproven; the first retro
 usually finds most of the value.
+
+### Upgrading an existing project
+
+`no-new-deps` and `defect` ship as `hook-warn` since the default-rule-hooks change.
+`sync.py` delivers `no-new-deps-warn.py` and `defect-warn.py` into `.claude/hooks/`,
+but a project's own `rules.json` is never overwritten, so an existing project keeps
+whatever `enforcement` it already recorded until its next retro flips it. Expect the
+hooks to fire while the registry still reads `prose`; the signals are recorded either
+way and the next report reconciles it.
