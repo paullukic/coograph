@@ -23,3 +23,21 @@ schema: spec-driven
 #     tasks:
 #       - Break tasks into chunks of max 2 hours
 #       - Each task must have clear acceptance criteria
+
+# Per-task models (optional, opt-in)
+# Which model each Coograph agent runs on. `unset` means Coograph asks once, on
+# the next ticket, and never again whatever you answer. `off` means every agent
+# inherits your session model and nothing is suggested. `preset` applies the map
+# below. `per-task` suggests a map for each ticket before using it.
+#   /coograph-suggest-multi-models   propose or change a mapping
+#   /coograph-disable-multi-models   turn it off for good
+models:
+  mode: unset          # unset | off | preset | per-task
+  # preset:            # aliases: fable | opus | sonnet | haiku
+  #   explore: haiku
+  #   search: haiku
+  #   verifier: sonnet
+  #   reviewer: opus
+  #   debugger: opus
+  #   planner: opus
+  #   retro: opus

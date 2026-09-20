@@ -49,6 +49,24 @@ If the ticket is specific and well-scoped:
 - Investigation can be brief
 - Proceed directly to Step 4
 
+## Step 3b: Models, asked once
+
+Read the `models` block in `openspec/config.yaml`. If `mode` is anything other
+than `unset`, skip this step entirely and never mention it.
+
+When it is `unset`, ask once, here, after investigation and before the proposal,
+because this is the first moment the shape of the work is known:
+
+> Coograph can run each agent on a different model. `explore` reads a lot and
+> decides little; `debugger` decides everything. Do you want one model for
+> everything, a saved mapping, or to be asked per ticket?
+
+Write the answer to `openspec/config.yaml` as `off`, `preset` or `per-task`, and
+never ask again for this project whatever they say. For `preset` or `per-task`,
+run the `coograph-suggest-multi-models` skill to produce the mapping.
+
+Ask exactly once. A second prompt in the same project is a bug, not a nudge.
+
 ## Step 4: Flow into OpenSpec proposal
 
 Once investigation is complete and requirements are clear, invoke the **coograph-propose** skill to create the proposal.
