@@ -110,7 +110,7 @@ Run `/skills` in a Codex session. If `coograph-init` is missing, either your Cod
 |-----------|---------|
 | **Workflow** | Plan → Propose → Apply → Review → Archive pipeline |
 | **Agents** | 6 specialized agents (Planner, Reviewer, Debugger, Verifier, Explore, Retro) |
-| **Claude Code Hooks** | Lifecycle hooks: block generated files, log bash, warn on out-of-scope edits, inject graph status, capture guardrail signals |
+| **Claude Code Hooks** | Lifecycle hooks: block generated files, log bash, warn on out-of-scope edits, warn on new dependencies, warn on unreviewed commits, inject graph status, capture guardrail signals |
 | **Retro** | Measures which rules get broken and what sessions cost, then proposes instruction and hook edits as an OpenSpec. Local only. |
 | **Code Graph** | SQLite dependency graph with MCP server for targeted queries |
 | **Instructions** | Domain-specific guidance (testing, styling) loaded on demand |
@@ -189,6 +189,8 @@ Lifecycle hooks in `.claude/hooks/`, wired via `.claude/settings.json`. They run
 | **`log-bash.py`** | PreToolUse (Bash) | Appends every bash command to `.coograph/session.log` *and* `.coograph/sessions/<session_id>.log` (both gitignored, per-project). Two-layer audit trail. Codex CLI + OpenCode variants write to the same files — see [Bash audit log](#bash-audit-log) below. |
 | **`report-graph.py`** | SessionStart | Reports code-graph state at session start: `[code-graph] N nodes, M edges, SIZEkb, updated Xh ago`. Prints a rebuild hint if `graph.db` is missing but the server is present. |
 | **`warn-scope.py`** | PreToolUse (Edit/Write) | If an active OpenSpec exists, **warns** (non-blocking) when editing a file not referenced in its `tasks.md`. Surfaces scope creep without stopping work. Records the warning as a Retro signal. |
+| **`no-new-deps-warn.py`** | PreToolUse (Bash/PowerShell, Edit/Write) | **Warns** (non-blocking) the first time a session installs a package or edits a dependency manifest. Silent for restores (`npm install` bare, `pip install -r`, `pip install -e .`) because it calls the same `dep_command` the `new-dependency` detector uses — the two cannot disagree. Emits no signal of its own: the detector already records the violation, and a second copy would be counted twice. |
+| **`defect-warn.py`** | PreToolUse (Bash/PowerShell, Edit/Write, Skill/Task), UserPromptSubmit | **Warns** (non-blocking) once, at `git commit`, when a session edited source and no review ran. A proxy for the `defect` rule: a hook cannot see a future fix commit, so it flags the review that was skipped. Counts all three ways a review starts — the Skill tool, a delegation to the reviewer agent, and a typed `/coograph-review`. Docs and `openspec/` edits do not count. Emits no signal of its own, for the same reason as above. |
 | **`capture-signals.py`** | SessionEnd, SessionStart | On SessionEnd, turns the session transcript into Retro signals (`.coograph/signals.jsonl`, metadata only). On SessionStart, catches up transcripts from killed sessions (time-boxed) and prints `[retro] N sessions captured, K rules over threshold, run /coograph-retro`. See [Retro](#retro). |
 
 Personal or machine-specific overrides go in `.claude/settings.local.json` (gitignored, never synced). `.claude/settings.json` is template-managed and gets overwritten on sync.

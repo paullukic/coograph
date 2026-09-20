@@ -77,12 +77,8 @@ SEARCH_TOOLS = {"Grep", "Glob"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
 GRAPH_PREFIX = "mcp__code-graph__"
 
-DEP_PROGRAMS = {"npm", "pnpm", "yarn", "pip", "pip3", "uv", "cargo", "go", "composer", "bun"}
-DEP_VERBS = {"install", "i", "add", "get", "require"}
-DEP_MANIFESTS = {
-    "package.json", "requirements.txt", "pyproject.toml", "go.mod",
-    "Cargo.toml", "composer.json", "Gemfile",
-}
+# signals is None when .github/retro/ is absent; the hook then does nothing anyway.
+DEP_MANIFESTS = signals.DEP_MANIFESTS if signals else frozenset()
 
 DEFAULT_CORRECTION_PATTERNS = [
     {"id": "no", "regex": r"^\s*no[,.! ]", "enabled": True},
@@ -267,38 +263,9 @@ def _active_openspec_exists(cwd: Path) -> bool:
         return False
 
 
-DEP_FILE_FLAGS = {"-r", "--requirement", "--requirements", "-c", "--constraint"}
-
-
-def _dep_command(command: str) -> bool:
-    """True for commands that add a dependency, not for ones that install
-    what a manifest already lists (`pip install -r requirements.txt`,
-    `pip install -e .`, `npm install`)."""
-    tokens = [t for t in command.replace("&&", " ").replace("||", " ").split() if t]
-    if not tokens:
-        return False
-    program = tokens[0].replace("\\", "/").rsplit("/", 1)[-1]
-    if program not in DEP_PROGRAMS:
-        return False
-    rest: list[str] = []
-    skip_next = False
-    for t in tokens[1:]:
-        if skip_next:
-            skip_next = False
-            continue
-        if t in DEP_FILE_FLAGS:
-            skip_next = True
-            continue
-        if t.startswith("-"):
-            continue
-        if t in {".", ".."} or t.endswith((".txt", ".in", ".lock")):
-            continue
-        rest.append(t)
-    if program == "uv" and rest[:1] == ["pip"]:
-        rest = rest[1:]
-    if not rest or rest[0] not in DEP_VERBS:
-        return False
-    return len(rest) >= 2
+# Dependency detection lives in the shared module so the hook that warns about
+# it and this detector that records it cannot drift apart.
+_dep_command = signals.dep_command if signals else (lambda command: False)
 
 
 # ---------------------------------------------------------------------------
