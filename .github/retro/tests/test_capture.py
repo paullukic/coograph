@@ -597,6 +597,83 @@ class HookModeTests(unittest.TestCase):
         self.assertEqual(recs[0]["evidence"], {"path": "dist/bundle.js", "reason": "directory"})
 
 
+    def test_no_new_deps_warns_once_and_records_nothing(self) -> None:
+        """The rule has a transcript detector; a hook record would double-count it."""
+        proc = self._run("no-new-deps-warn.py", {
+            "hook_event_name": "PreToolUse", "tool_name": "Bash", "session_id": "nd1",
+            "tool_use_id": "t3", "cwd": str(self.root),
+            "tool_input": {"command": "npm install left-pad"},
+        })
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("[no-new-deps]", proc.stderr)
+        self.assertEqual(read_signals(self.root), [])
+
+        again = self._run("no-new-deps-warn.py", {
+            "hook_event_name": "PreToolUse", "tool_name": "Bash", "session_id": "nd1",
+            "tool_use_id": "t4", "cwd": str(self.root),
+            "tool_input": {"command": "yarn add axios"},
+        })
+        self.assertEqual(again.returncode, 0)
+        self.assertEqual(again.stderr.strip(), "")
+
+    def test_no_new_deps_agrees_with_its_detector(self) -> None:
+        """Hook and detector share one implementation, so they cannot disagree."""
+        commands = [
+            "npm install left-pad", "npm i -D typescript", "pip install --upgrade requests",
+            "cargo install ripgrep", "go install example.com/x@latest", "pnpm i lodash",
+            "npm install", "pip install -r requirements.txt", "pip install -e .",
+            'git commit -m "npm install left-pad"', "echo 'npm install foo'", "npm run build",
+        ]
+        for i, command in enumerate(commands):
+            expected = 1 if sig.dep_command(command) else 0
+            proc = self._run("no-new-deps-warn.py", {
+                "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                "session_id": f"agree{i}", "tool_use_id": f"a{i}", "cwd": str(self.root),
+                "tool_input": {"command": command},
+            })
+            self.assertEqual(proc.returncode, expected, f"hook disagreed on: {command}")
+
+    def test_defect_warn_fires_on_unreviewed_commit(self) -> None:
+        payload = {"hook_event_name": "PreToolUse", "session_id": "df1", "cwd": str(self.root)}
+        self._run("defect-warn.py", {**payload, "tool_name": "Edit", "tool_use_id": "t5a",
+                                     "tool_input": {"file_path": str(self.root / "src" / "a.ts")}})
+        proc = self._run("defect-warn.py", {**payload, "tool_name": "Bash", "tool_use_id": "t5b",
+                                            "tool_input": {"command": "git commit -m x"}})
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("[defect-warn]", proc.stderr)
+        self.assertEqual(read_signals(self.root), [])
+
+    def test_defect_warn_silent_after_a_review(self) -> None:
+        """Every route to a review counts: the Skill tool, a delegation, a typed command."""
+        for i, review in enumerate((
+            {"tool_name": "Skill", "tool_input": {"skill": "coograph:coograph-review"}},
+            {"tool_name": "Task", "tool_input": {"subagent_type": "coograph:reviewer"}},
+            {"hook_event_name": "UserPromptSubmit", "prompt": "/coograph-review now"},
+        )):
+            sid = f"rev{i}"
+            base = {"session_id": sid, "cwd": str(self.root)}
+            self._run("defect-warn.py", {**base, "tool_name": "Edit", "tool_use_id": f"r{i}a",
+                                         "tool_input": {"file_path": str(self.root / "src" / "a.ts")}})
+            self._run("defect-warn.py", {**base, "tool_use_id": f"r{i}b", **review})
+            proc = self._run("defect-warn.py", {**base, "tool_name": "Bash", "tool_use_id": f"r{i}c",
+                                                "tool_input": {"command": "git commit -m y"}})
+            self.assertEqual(proc.returncode, 0, f"warned despite review route {i}")
+
+    def test_defect_warn_ignores_docs_and_non_commits(self) -> None:
+        base = {"hook_event_name": "PreToolUse", "session_id": "df2", "cwd": str(self.root)}
+        self._run("defect-warn.py", {**base, "tool_name": "Edit", "tool_use_id": "t6a",
+                                     "tool_input": {"file_path": str(self.root / "README.md")}})
+        docs_only = self._run("defect-warn.py", {**base, "tool_name": "Bash", "tool_use_id": "t6b",
+                                                 "tool_input": {"command": "git commit -m docs"}})
+        self.assertEqual(docs_only.returncode, 0)
+
+        self._run("defect-warn.py", {**base, "tool_name": "Edit", "tool_use_id": "t6c",
+                                     "tool_input": {"file_path": str(self.root / "src" / "a.ts")}})
+        not_a_commit = self._run("defect-warn.py", {**base, "tool_name": "Bash", "tool_use_id": "t6d",
+                                                    "tool_input": {"command": "git log --grep=commit"}})
+        self.assertEqual(not_a_commit.returncode, 0)
+
+
 class CompactCaptureTests(unittest.TestCase):
     """A session that never ends still has to report."""
 

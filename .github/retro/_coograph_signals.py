@@ -60,6 +60,58 @@ ENFORCEMENTS = {"prose", "hook-warn", "hook-block"}
 
 # Evidence keys each detector may write. Anything else is dropped at emit
 # time. This list is the privacy boundary: no key here can hold free text.
+# ---------------------------------------------------------------------------
+# Dependency detection
+#
+# One implementation, imported by both capture-signals.py (which records the
+# violation) and no-new-deps-warn.py (which warns about it as it happens). Two
+# hand-maintained copies of this rule drifted apart the first time they existed,
+# so the hook now cannot disagree with the detector by construction.
+
+DEP_PROGRAMS = {"npm", "pnpm", "yarn", "pip", "pip3", "uv", "cargo", "go", "composer", "bun"}
+DEP_VERBS = {"install", "i", "add", "get", "require"}
+DEP_FILE_FLAGS = {"-r", "--requirement", "--requirements", "-c", "--constraint"}
+DEP_MANIFESTS = {
+    "package.json", "requirements.txt", "pyproject.toml",
+    "go.mod", "Cargo.toml", "composer.json", "Gemfile",
+}
+
+
+def dep_command(command: str) -> bool:
+    """True for commands that add a dependency, not for ones that install
+    what a manifest already lists (`pip install -r requirements.txt`,
+    `pip install -e .`, `npm install`).
+
+    Anchored on the first token, so a dependency command quoted inside another
+    command -- `git commit -m "npm install x"` -- is not one.
+    """
+    tokens = [t for t in command.replace("&&", " ").replace("||", " ").split() if t]
+    if not tokens:
+        return False
+    program = tokens[0].replace("\\", "/").rsplit("/", 1)[-1]
+    if program not in DEP_PROGRAMS:
+        return False
+    rest: list[str] = []
+    skip_next = False
+    for t in tokens[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if t in DEP_FILE_FLAGS:
+            skip_next = True
+            continue
+        if t.startswith("-"):
+            continue
+        if t in {".", ".."} or t.endswith((".txt", ".in", ".lock")):
+            continue
+        rest.append(t)
+    if program == "uv" and rest[:1] == ["pip"]:
+        rest = rest[1:]
+    if not rest or rest[0] not in DEP_VERBS:
+        return False
+    return len(rest) >= 2
+
+
 ALLOWED_EVIDENCE: dict[str, set[str]] = {
     "graph-first": {"count", "first_index", "tools", "proof"},
     "openspec-gate": {"files", "count"},

@@ -6,18 +6,28 @@ capture-signals.py and, until this hook, no enforcement. Retro could measure the
 rule and escalate it, but the escalation had to be hand-written by every project
 that hit the threshold.
 
-Mirrors the `new-dependency` detector exactly, including what it does NOT count:
-a command that only restores what a manifest already lists is not an addition.
-A hook that disagreed with its detector would make the next report unreadable.
+Two properties are deliberate:
+
+1. The decision comes from `_coograph_signals.dep_command`, the same function
+   capture-signals.py uses. The hook cannot warn about something the detector
+   would not count, or stay silent on something it would.
+
+2. This hook records nothing. `no-new-deps` already has a transcript detector,
+   and a hook-emitted copy of the same violation would be counted twice by
+   `summarize`, halving the rule's escalation threshold against itself. The
+   detector measures; this hook warns. Contrast warn-scope.py and
+   block-generated.py, whose rules have no transcript detector and therefore
+   must emit their own records.
 
 Never blocks - exits 1 so the warning surfaces without stopping the command, and
-at most once per session.
+at most once per session. If `.coograph/` is unwritable the marker cannot be
+written, so the warning degrades to once per install rather than once per
+session.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -28,32 +38,17 @@ except ImportError:  # guard not copied next to this hook: run unguarded
     def should_skip(payload: dict, hook_file: str) -> bool:
         return False
 try:
-    import _coograph_signals as signals
-except ImportError:  # Retro store not copied next to this hook: warn only
+    import _coograph_signals as signals  # shim in this directory -> .github/retro/
+except ImportError:  # without the shared module there is no detector to agree with
     signals = None
 
-EDIT_TOOLS = {"Edit", "Write", "MultiEdit"}
-MANIFESTS = {
-    "package.json", "requirements.txt", "pyproject.toml",
-    "go.mod", "Cargo.toml", "composer.json", "Gemfile",
-}
-
-# A named package follows the verb. Bare installs and manifest restores do not match.
-INSTALL_RE = re.compile(
-    r"\b("
-    r"npm\s+(?:install|i|add)|pnpm\s+(?:install|add)|yarn\s+add|bun\s+add|"
-    r"pip3?\s+install|uv\s+(?:add|pip\s+install)|poetry\s+add|"
-    r"cargo\s+add|go\s+get|composer\s+require|gem\s+install"
-    r")\s+(?P<rest>[^\n;&|]*)",
-    re.IGNORECASE,
-)
-RESTORE_FLAGS = re.compile(
-    r"(^|\s)(-r|--requirement|-e|--editable|--frozen|--from-lockfile)(\s|=|$)"
-)
+EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+SHELL_TOOLS = {"Bash", "PowerShell"}
+MARKER_DIR = "markers"
 
 
 def _marker(cwd: Path, sid: str) -> Path:
-    return cwd / ".coograph" / f"deps-warned-{sid}"
+    return cwd / ".coograph" / MARKER_DIR / f"deps-warned-{sid}"
 
 
 def _touch(path: Path) -> None:
@@ -64,22 +59,10 @@ def _touch(path: Path) -> None:
         pass
 
 
-def _installs_named_package(command: str) -> str | None:
-    """The package being added, or None when nothing is being added."""
-    for match in INSTALL_RE.finditer(command):
-        rest = (match.group("rest") or "").strip()
-        if not rest:
-            continue  # bare `npm install`: restores the manifest, adds nothing
-        if RESTORE_FLAGS.search(rest):
-            continue  # `pip install -r ...`, `pip install -e .`
-        first = rest.split()[0]
-        if first.startswith("-") or first in {".", "./"}:
-            continue
-        return first[:80]
-    return None
-
-
 def main() -> int:
+    if signals is None:
+        return 0
+
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except json.JSONDecodeError:
@@ -94,11 +77,13 @@ def main() -> int:
     sid = str(payload.get("session_id") or "unknown")
 
     subject: str | None = None
-    if tool == "Bash":
-        subject = _installs_named_package(str(tool_input.get("command") or ""))
+    if tool in SHELL_TOOLS:
+        command = str(tool_input.get("command") or "")
+        if signals.dep_command(command):
+            subject = command.split()[0] if command.split() else "a package"
     elif tool in EDIT_TOOLS:
-        raw = str(tool_input.get("file_path") or "")
-        if raw and Path(raw).name in MANIFESTS:
+        raw = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
+        if raw and Path(raw).name in signals.DEP_MANIFESTS:
             subject = Path(raw).name
     else:
         return 0
@@ -114,27 +99,7 @@ def main() -> int:
         file=sys.stderr,
     )
     _touch(_marker(cwd, sid))
-    _emit_signal(payload, cwd, sid, subject)
     return 1
-
-
-def _emit_signal(payload: dict, cwd: Path, sid: str, subject: str) -> None:
-    """Record the warning for Retro. Never affects the hook's own behavior."""
-    if signals is None:
-        return
-    try:
-        signals.emit(cwd, signals.make_record(
-            tool="claude-code",
-            session_id=sid,
-            kind="violation",
-            rule="no-new-deps",
-            detector="new-dependency",
-            confidence="deterministic",
-            evidence={"package": subject, "proof": "hook"},
-            origin="hook",
-        ))
-    except Exception:
-        pass
 
 
 if __name__ == "__main__":
