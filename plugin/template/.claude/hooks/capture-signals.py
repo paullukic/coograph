@@ -62,6 +62,10 @@ SELF_CAPTURE_SOURCES = {"compact"}
 FIX_SUBJECT_RE = re.compile(r"^(?:fix|hotfix|revert)\b", re.IGNORECASE)
 DEFECT_LOOKBACK_DAYS_DEFAULT = 14
 DEFECT_MAX_SIGNALS = 20
+# A project root that is not a repository usually holds a few: app/, admin/,
+# functions/. Bounded so a directory full of checkouts cannot stall a capture.
+DEFECT_MAX_REPOS = 5
+SKIP_REPO_DIRS = {"node_modules", "dist", "build", "vendor", "__pycache__", "openspec"}
 GIT_TIMEOUT_SECONDS = 5.0
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
@@ -328,43 +332,83 @@ def _commits(cwd: Path, since: str) -> list[tuple[str, str, list[str]]]:
     return out
 
 
+def git_roots(cwd: Path) -> list[tuple[Path, str]]:
+    """Repositories to scan, as (path, prefix).
+
+    A project root is often not the repository. `gastarbajter` holds `app/`
+    and `admin/`, each its own repo, and a scan of the root alone finds
+    nothing. When the root is a repo it is the only one scanned; otherwise its
+    immediate subdirectories that are repos are, and their name becomes the
+    prefix so evidence paths stay project-relative and unambiguous.
+    """
+    if (cwd / ".git").exists():  # a file for worktrees and submodules
+        return [(cwd, "")]
+    out: list[tuple[Path, str]] = []
+    try:
+        children = sorted(p for p in cwd.iterdir() if p.is_dir())
+    except OSError:
+        return []
+    for child in children:
+        if child.name.startswith(".") or child.name in SKIP_REPO_DIRS:
+            continue
+        if (child / ".git").exists():
+            out.append((child, child.name + "/"))
+            if len(out) >= DEFECT_MAX_REPOS:
+                break
+    return out
+
+
+def _defects_in(root: Path, prefix: str, started: str, lookback_days: int,
+                budget: int) -> list[tuple[str, dict]]:
+    """Defect signals for one repository, at most `budget` of them.
+
+    The origin has to be the newest non-fix commit *older than the fix*. Taking
+    the newest one overall reports a change that landed after the fix as its
+    cause, which reads as nonsense in a report. `git log` is newest first, so
+    the origin is the first non-fix entry that follows the fix in the list.
+    """
+    window = {sha for sha, _subject, _paths in _commits(root, started)}
+    if not window:
+        return []
+    history = _commits(root, f"{lookback_days + 1}.days.ago")
+    found: list[tuple[str, dict]] = []
+    seen: set[tuple[str, str]] = set()
+    for i, (sha, subject, paths) in enumerate(history):
+        if sha not in window or not FIX_SUBJECT_RE.match(subject):
+            continue
+        for path in paths:
+            key = (sha, path)
+            if key in seen:
+                continue
+            for older_sha, older_subject, older_paths in history[i + 1:]:
+                if FIX_SUBJECT_RE.match(older_subject) or path not in older_paths:
+                    continue
+                seen.add(key)
+                full = prefix + path
+                found.append((full, {
+                    "path": full, "fix": sha, "origin": older_sha, "days": lookback_days,
+                }))
+                break
+            if len(found) >= budget:
+                return found
+    return found
+
+
 def detect_defects(cwd: Path, parsed: Parsed, lookback_days: int) -> list[tuple[str, dict]]:
     """A fix commit landing on a file a recent non-fix commit touched.
 
     Scoped to the session's own window so a signal is attributable to the work
-    that produced it. Evidence is paths and abbreviated hashes only: never a
-    commit message, never a diff.
+    that produced it, and to every repository the project holds. Evidence is
+    paths and abbreviated hashes only: never a commit message, never a diff.
     """
     if not parsed.started:
         return []
-    fixes = _commits(cwd, parsed.started)
-    if not fixes:
-        return []
-    fixes = [c for c in fixes if FIX_SUBJECT_RE.match(c[1])]
-    if not fixes:
-        return []
-    # One lookback window covers every fix in this session.
-    history = _commits(cwd, f"{lookback_days + 1}.days.ago")
-    origin: dict[str, tuple[str, int]] = {}
-    for idx, (sha, subject, paths) in enumerate(history):
-        if FIX_SUBJECT_RE.match(subject):
-            continue
-        for path in paths:
-            origin.setdefault(path, (sha, idx))
     found: list[tuple[str, dict]] = []
-    seen: set[tuple[str, str]] = set()
-    for sha, _subject, paths in fixes:
-        for path in paths:
-            hit = origin.get(path)
-            if not hit or hit[0] == sha:
-                continue
-            key = (sha, path)
-            if key in seen:
-                continue
-            seen.add(key)
-            found.append((path, {"path": path, "fix": sha, "origin": hit[0], "days": lookback_days}))
-            if len(found) >= DEFECT_MAX_SIGNALS:
-                return found
+    for root, prefix in git_roots(cwd):
+        found.extend(_defects_in(root, prefix, parsed.started, lookback_days,
+                                 DEFECT_MAX_SIGNALS - len(found)))
+        if len(found) >= DEFECT_MAX_SIGNALS:
+            break
     return found
 
 
