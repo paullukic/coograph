@@ -16,7 +16,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from fixtures import HOOKS, SENTINEL, Transcript, make_project, read_signals
+from fixtures import HOOKS, SEED, SENTINEL, Transcript, make_project, read_signals
 
 import _coograph_signals as sig  # noqa: E402
 import _coograph_guard as guard  # noqa: E402
@@ -295,6 +295,10 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(len(recs), 1)
         self.assertEqual(recs[0]["evidence"], {"pattern": "no", "after_tool": True})
         self.assertEqual(recs[0]["confidence"], "heuristic")
+        # A violation against a real rule, so repeated corrections can cluster
+        # and reach a proposal instead of being reported as colour.
+        self.assertEqual(recs[0]["kind"], "violation")
+        self.assertEqual(recs[0]["rule"], "user-correction")
 
     def test_new_dependency(self) -> None:
         t = Transcript("d1")
@@ -589,6 +593,192 @@ class HookModeTests(unittest.TestCase):
         recs = read_signals(self.root)
         self.assertEqual(recs[0]["rule"], "generated-files")
         self.assertEqual(recs[0]["evidence"], {"path": "dist/bundle.js", "reason": "directory"})
+
+
+class CompactCaptureTests(unittest.TestCase):
+    """A session that never ends still has to report."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = make_project(Path(self.tmp.name) / "proj")
+        self.tdir = Path(self.tmp.name) / "transcripts"
+        self.tdir.mkdir()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _hook(self, source: str, transcript: Path) -> None:
+        cap._hook({
+            "hook_event_name": "SessionStart",
+            "source": source,
+            "transcript_path": str(transcript),
+            "cwd": str(self.root),
+        })
+
+    def _transcript(self, sid: str, says: int) -> Path:
+        t = Transcript(sid)
+        t.result(t.tool("Edit", file_path=str(self.root / "src" / "a.ts")))
+        for i in range(says):
+            t.say(f"step {i}")
+        return t.write(self.tdir / f"{sid}.jsonl")
+
+    def test_compact_captures_own_transcript(self) -> None:
+        path = self._transcript("live-1", 2)
+        self._hook("compact", path)
+        sids = {r["session_id"] for r in read_signals(self.root)}
+        self.assertIn("live-1", sids)
+
+    def test_compact_replaces_as_the_session_grows(self) -> None:
+        path = self._transcript("live-2", 2)
+        self._hook("compact", path)
+        first = [r for r in read_signals(self.root) if r["kind"] == "session"]
+        self.assertEqual(len(first), 1)
+        grown = self._transcript("live-2", 6)
+        self._hook("compact", grown)
+        second = [r for r in read_signals(self.root) if r["kind"] == "session"]
+        self.assertEqual(len(second), 1, "a growing session replaces its own records")
+        self.assertGreater(
+            second[0]["evidence"]["message_count"], first[0]["evidence"]["message_count"]
+        )
+
+    def test_startup_still_skips_its_own_transcript(self) -> None:
+        path = self._transcript("live-3", 2)
+        self._hook("startup", path)
+        sids = {r["session_id"] for r in read_signals(self.root)}
+        self.assertNotIn("live-3", sids, "catch-up captures siblings, not the live session")
+
+    def test_no_registry_means_no_capture(self) -> None:
+        (self.root / ".github" / "retro" / "rules.json").unlink()
+        path = self._transcript("live-4", 2)
+        self._hook("compact", path)
+        self.assertEqual(read_signals(self.root), [])
+
+
+class DefectDetectorTests(unittest.TestCase):
+    """A fix landing on a file a recent change touched."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = make_project(Path(self.tmp.name) / "proj")
+        self.tdir = Path(self.tmp.name) / "transcripts"
+        self.tdir.mkdir()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _git(self, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=str(self.root), capture_output=True, text=True, check=False)
+
+    def _repo(self) -> None:
+        self._git("init", "-q")
+        self._git("config", "user.email", "t@example.com")
+        self._git("config", "user.name", "t")
+        self._git("config", "commit.gpgsign", "false")
+
+    def _commit(self, path: str, subject: str, body: str = "x") -> None:
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+        self._git("add", path)
+        self._git("commit", "-q", "-m", subject)
+
+    def _parsed(self, sid: str = "g1"):
+        t = Transcript(sid)
+        t.result(t.tool("Edit", file_path=str(self.root / "src" / "a.ts")))
+        t.say("done")
+        path = t.write(self.tdir / f"{sid}.jsonl")
+        return cap.parse_transcript(path, cap.DEFAULT_CORRECTION_PATTERNS)
+
+    def test_fix_after_feature_is_a_defect(self) -> None:
+        self._repo()
+        self._commit("src/thing.ts", "feat: add thing")
+        self._commit("src/thing.ts", "fix(thing): wrong region", body="y")
+        parsed = self._parsed()
+        parsed.started = "1970-01-01T00:00:00Z"  # whole history in window
+        found = cap.detect_defects(self.root, parsed, 14)
+        self.assertEqual(len(found), 1)
+        evidence = found[0][1]
+        self.assertEqual(evidence["path"], "src/thing.ts")
+        self.assertEqual(set(evidence), {"path", "fix", "origin", "days"})
+
+    def test_fix_on_a_file_no_feature_touched_is_not(self) -> None:
+        self._repo()
+        self._commit("src/other.ts", "feat: add other")
+        self._commit("src/fresh.ts", "fix: unrelated")
+        parsed = self._parsed()
+        parsed.started = "1970-01-01T00:00:00Z"
+        self.assertEqual(cap.detect_defects(self.root, parsed, 14), [])
+
+    def test_feature_only_history_is_not(self) -> None:
+        self._repo()
+        self._commit("src/a.ts", "feat: one")
+        self._commit("src/a.ts", "feat: two", body="y")
+        parsed = self._parsed()
+        parsed.started = "1970-01-01T00:00:00Z"
+        self.assertEqual(cap.detect_defects(self.root, parsed, 14), [])
+
+    def test_without_git_there_is_no_signal(self) -> None:
+        parsed = self._parsed()
+        parsed.started = "1970-01-01T00:00:00Z"
+        self.assertEqual(cap.detect_defects(self.root, parsed, 14), [])
+
+    def test_no_session_start_means_no_window(self) -> None:
+        self._repo()
+        self._commit("src/thing.ts", "feat: add thing")
+        self._commit("src/thing.ts", "fix: broke it", body="y")
+        parsed = self._parsed()
+        parsed.started = ""
+        self.assertEqual(cap.detect_defects(self.root, parsed, 14), [])
+
+
+class EpisodeTests(unittest.TestCase):
+    """Thresholds count session-days, so long sessions can cross them."""
+
+    def _rec(self, sid: str, ts: str) -> dict:
+        return sig.make_record(
+            tool="claude-code", session_id=sid, kind="violation", rule="graph-first",
+            detector="graph-first", confidence="deterministic", origin="transcript", ts=ts,
+            evidence={"count": 1, "first_index": 0, "tools": ["Grep"], "proof": "mcp-later"},
+        )
+
+    def test_one_session_across_days_is_several_episodes(self) -> None:
+        recs = [
+            self._rec("long", "2026-09-01T10:00:00Z"),
+            self._rec("long", "2026-09-02T10:00:00Z"),
+            self._rec("long", "2026-09-03T10:00:00Z"),
+        ]
+        self.assertEqual(len(sig.episodes_of(recs)), 3)
+        self.assertEqual(len({r["session_id"] for r in recs}), 1)
+
+    def test_same_day_is_one_episode(self) -> None:
+        recs = [
+            self._rec("long", "2026-09-01T10:00:00Z"),
+            self._rec("long", "2026-09-01T18:00:00Z"),
+        ]
+        self.assertEqual(len(sig.episodes_of(recs)), 1)
+
+    def test_long_session_can_cross_a_threshold(self) -> None:
+        rules = json.loads(SEED.read_text(encoding="utf-8"))
+        rules["last_retro"] = None
+        recs = [self._rec("long", f"2026-09-0{i}T10:00:00Z") for i in (1, 2, 3)]
+        summary = sig.summarize(recs, rules)
+        row = next(e for e in summary["per_rule"] if e["id"] == "graph-first")
+        self.assertEqual(row["sessions"], 1)
+        self.assertEqual(row["episodes"], 3)
+        self.assertEqual(row["status"], "over_threshold")
+
+    def test_episodes_since_advances_inside_a_session(self) -> None:
+        sessions = {"long": {"evidence": {"started": "2026-09-01T09:00:00Z"}}}
+        episodes = sig.episodes_of([
+            self._rec("long", "2026-09-01T10:00:00Z"),
+            self._rec("long", "2026-09-02T10:00:00Z"),
+            self._rec("long", "2026-09-03T10:00:00Z"),
+        ])
+        last_retro = {"session_id": "long", "date": "2026-09-01T09:30:00Z", "captured_sessions": 1}
+        # sessions_since sees one session it has already reviewed: zero forever.
+        self.assertEqual(sig.sessions_since(sessions, last_retro), 0)
+        # episodes_since keeps counting the days that followed.
+        self.assertEqual(sig.episodes_since(episodes, sessions, last_retro), 3)
 
 
 if __name__ == "__main__":
