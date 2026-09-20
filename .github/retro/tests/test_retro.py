@@ -229,8 +229,12 @@ class ReportTests(unittest.TestCase):
         for i in range(10):
             _session(self.root, f"p{i}", f"2026-09-{i + 1:02d}")
         report, md = self._report()
-        self.assertIn("no-new-deps", report["prune_candidates"])
+        self.assertIn("user-correction", report["prune_candidates"])
         self.assertNotIn("graph-first", report["prune_candidates"])  # hard rules never prune
+        # Rules enforced by a hook are not prose, so they are never prune candidates
+        # however quiet they are.
+        self.assertNotIn("no-new-deps", report["prune_candidates"])
+        self.assertNotIn("defect", report["prune_candidates"])
         self.assertIn("Prune candidates", md)
 
     def test_tokens_before_after_and_adherence(self) -> None:
