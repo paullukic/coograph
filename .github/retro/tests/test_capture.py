@@ -698,9 +698,10 @@ class DefectDetectorTests(unittest.TestCase):
         parsed.started = "1970-01-01T00:00:00Z"  # whole history in window
         found = cap.detect_defects(self.root, parsed, 14)
         self.assertEqual(len(found), 1)
-        evidence = found[0][1]
-        self.assertEqual(evidence["path"], "src/thing.ts")
-        self.assertEqual(set(evidence), {"path", "fix", "origin", "days"})
+        evidence = found[0]
+        self.assertEqual(evidence["files"], ["src/thing.ts"])
+        self.assertEqual(evidence["count"], 1)
+        self.assertEqual(set(evidence), {"fix", "origin", "files", "count", "days"})
 
     def test_fix_on_a_file_no_feature_touched_is_not(self) -> None:
         self._repo()
@@ -723,6 +724,39 @@ class DefectDetectorTests(unittest.TestCase):
         parsed.started = "1970-01-01T00:00:00Z"
         self.assertEqual(cap.detect_defects(self.root, parsed, 14), [])
 
+    def test_one_fix_touching_many_files_is_one_signal(self) -> None:
+        self._repo(self.root)
+        for name in ("a", "b", "c"):
+            self._commit(self.root, f"src/{name}.ts", f"feat: add {name}")
+        for name in ("a", "b", "c"):
+            (self.root / "src" / f"{name}.ts").write_text("patched", encoding="utf-8")
+        self._git(self.root, "add", "-A")
+        self._git(self.root, "commit", "-q", "-m", "fix: repair all three")
+        parsed = self._parsed()
+        parsed.started = "1970-01-01T00:00:00Z"
+        found = cap.detect_defects(self.root, parsed, 14)
+        self.assertEqual(len(found), 3, "one signal per origin commit, not per file")
+        self.assertEqual(sorted(f for e in found for f in e["files"]),
+                         ["src/a.ts", "src/b.ts", "src/c.ts"])
+
+    def test_files_sharing_one_origin_collapse(self) -> None:
+        self._repo(self.root)
+        for name in ("a", "b"):
+            (self.root / "src").mkdir(parents=True, exist_ok=True)
+            (self.root / "src" / f"{name}.ts").write_text("1", encoding="utf-8")
+        self._git(self.root, "add", "-A")
+        self._git(self.root, "commit", "-q", "-m", "feat: add both")
+        for name in ("a", "b"):
+            (self.root / "src" / f"{name}.ts").write_text("2", encoding="utf-8")
+        self._git(self.root, "add", "-A")
+        self._git(self.root, "commit", "-q", "-m", "fix: repair both")
+        parsed = self._parsed()
+        parsed.started = "1970-01-01T00:00:00Z"
+        found = cap.detect_defects(self.root, parsed, 14)
+        self.assertEqual(len(found), 1, "same fix, same origin, one signal")
+        self.assertEqual(found[0]["count"], 2)
+        self.assertEqual(found[0]["files"], ["src/a.ts", "src/b.ts"])
+
     def test_origin_must_predate_the_fix(self) -> None:
         """A change that landed after the fix cannot be its cause."""
         self._repo(self.root)
@@ -736,8 +770,8 @@ class DefectDetectorTests(unittest.TestCase):
         parsed.started = "1970-01-01T00:00:00Z"
         found = cap.detect_defects(self.root, parsed, 14)
         self.assertEqual(len(found), 1)
-        self.assertEqual(found[0][1]["origin"], oldest)
-        self.assertNotEqual(found[0][1]["origin"], newest)
+        self.assertEqual(found[0]["origin"], oldest)
+        self.assertNotEqual(found[0]["origin"], newest)
 
     def test_subrepos_when_the_root_is_not_one(self) -> None:
         """gastarbajter's shape: the project root holds app/ and admin/."""
@@ -750,7 +784,7 @@ class DefectDetectorTests(unittest.TestCase):
         parsed = self._parsed()
         parsed.started = "1970-01-01T00:00:00Z"
         found = cap.detect_defects(self.root, parsed, 14)
-        paths = sorted(e["path"] for _p, e in found)
+        paths = sorted(f for e in found for f in e["files"])
         self.assertEqual(paths, ["admin/src/thing.ts", "app/src/thing.ts"],
                          "paths carry the sub-repo so they stay project-relative")
 
@@ -766,7 +800,7 @@ class DefectDetectorTests(unittest.TestCase):
         self.assertEqual(cap.git_roots(self.root), [(self.root, "")])
         parsed = self._parsed()
         parsed.started = "1970-01-01T00:00:00Z"
-        paths = sorted(e["path"] for _p, e in cap.detect_defects(self.root, parsed, 14))
+        paths = sorted(f for e in cap.detect_defects(self.root, parsed, 14) for f in e["files"])
         self.assertEqual(paths, ["src/a.ts"])
 
     def test_subrepo_scan_is_bounded(self) -> None:

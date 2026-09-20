@@ -67,7 +67,7 @@ ALLOWED_EVIDENCE: dict[str, set[str]] = {
     "generated-file-block": {"path", "reason"},
     "build-retry": {"program", "hash", "runs", "errors"},
     "user-correction": {"pattern", "after_tool"},
-    "defect": {"path", "fix", "origin", "days"},
+    "defect": {"fix", "origin", "files", "count", "days"},
     "new-dependency": {"program", "manifest", "via"},
     "session": {
         "message_count", "tools_used", "tool_calls_total", "edited_files",
