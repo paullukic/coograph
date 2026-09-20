@@ -681,21 +681,25 @@ def _hook(payload: dict) -> int:
         line = signals.status_line(cwd)
         if line:
             # Plain stdout from SessionStart reaches the model and nobody else,
-            # so the line the user is meant to act on has to travel as
-            # structured output: `additionalContext` for the model,
-            # `systemMessage` for the terminal. The alternative, exit 2 with
-            # stderr, does reach the user but Claude Code labels it "hook
-            # error", and a nudge that looks like a failure trains people to
-            # ignore it. A quiet report carries no systemMessage.
-            out: dict = {
+            # so the line has to travel as structured output: `systemMessage`
+            # for the terminal, `additionalContext` for the model. The
+            # alternative, exit 2 with stderr, does reach the user but Claude
+            # Code labels it "hook error", and a nudge that looks like a
+            # failure trains people to ignore it.
+            #
+            # It always prints, including "nothing over threshold". Silence is
+            # indistinguishable from broken: a user who sees nothing cannot
+            # tell a healthy project from a hook that never ran, and goes
+            # looking for a fault that isn't there. The code-graph line next
+            # to it prints every session for the same reason. One short line
+            # is a heartbeat, not noise.
+            print(json.dumps({
+                "systemMessage": line,
                 "hookSpecificOutput": {
                     "hookEventName": "SessionStart",
                     "additionalContext": line,
                 },
-            }
-            if signals.CALL_TO_ACTION in line:
-                out["systemMessage"] = line
-            print(json.dumps(out))
+            }))
         return 0
 
     return 0

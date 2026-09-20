@@ -708,14 +708,17 @@ class StatusVisibilityTests(unittest.TestCase):
         self.assertIn(sig.CALL_TO_ACTION, payload["hookSpecificOutput"]["additionalContext"],
                       "the model gets it too")
 
-    def test_nothing_to_do_stays_quiet(self) -> None:
+    def test_a_quiet_report_still_shows(self) -> None:
+        """Silence reads as broken; a healthy project has to say so."""
         code, out, err = self._start()
         self.assertEqual(code, 0)
         self.assertEqual(err, "")
         payload = json.loads(out)
-        self.assertNotIn("systemMessage", payload, "a quiet report never interrupts the user")
-        self.assertIn("[retro]", payload["hookSpecificOutput"]["additionalContext"],
-                      "the model is still told")
+        line = payload["systemMessage"]
+        self.assertTrue(line.startswith("[retro]"), line)
+        self.assertNotIn(sig.CALL_TO_ACTION, line, "nothing to act on here")
+        self.assertEqual(line, payload["hookSpecificOutput"]["additionalContext"],
+                         "the user and the model are told the same thing")
 
     def test_clear_catches_up_the_session_you_just_left(self) -> None:
         sibling = Transcript("left-behind")
