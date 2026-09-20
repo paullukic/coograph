@@ -67,6 +67,7 @@ ALLOWED_EVIDENCE: dict[str, set[str]] = {
     "generated-file-block": {"path", "reason"},
     "build-retry": {"program", "hash", "runs", "errors"},
     "user-correction": {"pattern", "after_tool"},
+    "defect": {"path", "fix", "origin", "days"},
     "new-dependency": {"program", "manifest", "via"},
     "session": {
         "message_count", "tools_used", "tool_calls_total", "edited_files",
@@ -434,6 +435,54 @@ def _started_of(session_rec: dict) -> str:
     return str((session_rec.get("evidence") or {}).get("started") or session_rec.get("ts") or "")
 
 
+def episode_key(rec: dict) -> str:
+    """The threshold unit: one session on one calendar day.
+
+    A session id alone cannot carry a threshold. A user who works in long
+    sessions produces one id per several days, so "3 sessions" is unreachable
+    no matter how often a rule breaks; a user who restarts constantly crosses
+    it on noise. The day is taken from the record's own timestamp, so the
+    stored records never change and old signal files keep working.
+    """
+    sid = str(rec.get("session_id") or "")
+    day = str(rec.get("ts") or "")[:10]
+    return f"{sid}:{day}" if day else sid
+
+
+def episodes_of(records: list[dict]) -> dict[str, str]:
+    """Episode key -> the latest timestamp seen in that episode."""
+    out: dict[str, str] = {}
+    for r in records:
+        key = episode_key(r)
+        ts = str(r.get("ts") or "")
+        if ts > out.get(key, ""):
+            out[key] = ts
+    return out
+
+
+def episodes_since(episodes: dict[str, str], sessions: dict[str, dict],
+                   last_retro: dict | None) -> int:
+    """Episodes that happened after the last retro.
+
+    Anchored like `sessions_since`, on the start of the session the retro ran
+    in, falling back to the recorded date. Episodes are what makes this work
+    inside a long session: the day the retro ran is not counted, and every
+    later day of that same session is, so the counter advances instead of
+    reading 0 until the session finally ends.
+    """
+    if not last_retro:
+        return len(episodes)
+    anchor = ""
+    sid = str(last_retro.get("session_id") or "")
+    if sid and sid in sessions:
+        anchor = _started_of(sessions[sid])
+    if not anchor:
+        anchor = str(last_retro.get("date") or "")
+    if not anchor:
+        return len(episodes)
+    return sum(1 for ts in episodes.values() if ts > anchor)
+
+
 def sessions_since(sessions: dict[str, dict], last_retro: dict | None) -> int:
     """Sessions that started after the last retro.
 
@@ -463,7 +512,11 @@ def summarize(records: list[dict], rules: dict) -> dict:
         str(r["session_id"]): r for r in records if r.get("kind") == "session"
     }
     total_sessions = len(sessions)
-    since_last_retro = sessions_since(sessions, rules.get("last_retro"))
+    episodes = episodes_of(records)
+    total_episodes = len(episodes)
+    # Thresholds count episodes; sessions stay in the report so a reader can
+    # tell three short sessions from one long one.
+    since_last_retro = episodes_since(episodes, sessions, rules.get("last_retro"))
 
     per_rule: list[dict] = []
     over: list[dict] = []
@@ -472,29 +525,31 @@ def summarize(records: list[dict], rules: dict) -> dict:
         hits = [r for r in records if r.get("kind") == "violation" and r.get("rule") == rid]
         events = len(hits)
         rule_sessions = len({r.get("session_id") for r in hits})
+        rule_episodes = len({episode_key(r) for r in hits})
         deterministic = any(r.get("confidence") == "deterministic" for r in hits)
         confidence = "deterministic" if deterministic or not hits else "heuristic"
         det_hits = [r for r in hits if r.get("confidence") == "deterministic"]
         det_events = len(det_hits)
         det_sessions = len({r.get("session_id") for r in det_hits})
+        det_episodes = len({episode_key(r) for r in det_hits})
 
         if rule.get("detector") is None:
             status = "no_detector"
         elif (
             det_events >= thresholds["deterministic_events"]
-            and det_sessions >= thresholds["deterministic_sessions"]
+            and det_episodes >= thresholds["deterministic_sessions"]
         ):
             status = "over_threshold"
         elif (
             events >= thresholds["heuristic_events"]
-            and rule_sessions >= thresholds["heuristic_sessions"]
+            and rule_episodes >= thresholds["heuristic_sessions"]
         ):
             status = "supporting_only"
         elif (
             events == 0
             and rule["enforcement"] == "prose"
             and not rule["hard"]
-            and total_sessions >= thresholds["prune_sessions"]
+            and total_episodes >= thresholds["prune_sessions"]
         ):
             status = "prune_candidate"
         else:
@@ -506,6 +561,7 @@ def summarize(records: list[dict], rules: dict) -> dict:
             "hard": rule["hard"],
             "events": events,
             "sessions": rule_sessions,
+            "episodes": rule_episodes,
             "confidence": confidence,
             "status": status,
         }
@@ -521,6 +577,7 @@ def summarize(records: list[dict], rules: dict) -> dict:
     over.sort(key=lambda e: (-e["events"], e["id"]))
     return {
         "total_sessions": total_sessions,
+        "total_episodes": total_episodes,
         "since_last_retro": since_last_retro,
         "per_rule": per_rule,
         "over_threshold": over,

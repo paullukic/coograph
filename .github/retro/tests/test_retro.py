@@ -39,11 +39,11 @@ def _session(root: Path, sid: str, started: str, *, edits: int = 0, review: bool
             evidence={"count": 1, "first_index": 0, "tools": ["Grep"], "proof": "mcp-later"}
             if rule == "graph-first" else ({"files": ["src/api/a.ts", "src/api/b.ts"], "count": 2}
                                            if rule == "openspec-gate" else {"path": "src/api/x.ts", "openspec": "s"}),
-            origin="transcript",
+            origin="transcript", ts=started,
         ))
     recs.append(sig.make_record(
         tool="claude-code", session_id=sid, kind="session", rule="none", detector="session",
-        confidence="deterministic", origin="transcript",
+        confidence="deterministic", origin="transcript", ts=started,
         evidence={
             "message_count": 10, "tools_used": {"Edit": edits}, "tool_calls_total": edits,
             "edited_files": edits, "skills_invoked": ["coograph-review"] if review else [],

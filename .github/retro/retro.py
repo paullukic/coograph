@@ -309,6 +309,7 @@ def build_report(cwd: Path, sig, rules: dict, records: list[dict]) -> dict:
         "generated": sig.now_iso(),
         "window": {
             "sessions": summary["total_sessions"],
+            "episodes": summary["total_episodes"],
             "since_last_retro": summary["since_last_retro"],
             "first": starts[0] if starts else None,
             "last": starts[-1] if starts else None,
@@ -382,19 +383,21 @@ def render_markdown(report: dict) -> str:
 
     lines += ["## Window", "",
               f"- Sessions captured: {n}",
-              f"- Sessions since last retro: {w['since_last_retro']}",
+              f"- Episodes (session-days): {w.get('episodes', '?')}",
+              f"- Episodes since last retro: {w['since_last_retro']}",
               f"- First: {w['first'] or 'n/a'}",
               f"- Last: {w['last'] or 'n/a'}", ""]
 
     lines += ["## Rules", "",
-              "| rule | enforcement | events | sessions | status | escalate to | before / after (events per session) |",
-              "|---|---|---|---|---|---|---|"]
+              "| rule | enforcement | events | episodes | sessions | status | escalate to | before / after (events per session) |",
+              "|---|---|---|---|---|---|---|---|"]
     for e in report["per_rule"]:
         ba = e.get("before_after")
         ba_txt = f"{ba['rate_before']} / {ba['rate_after']}" if ba else ""
         lines.append(
             f"| {e['id']} | {e['enforcement']}{' (hard)' if e['hard'] else ''} | {e['events']} | "
-            f"{e['sessions']} | {e['status']} | {e.get('escalate_to') or ''} | {ba_txt} |"
+            f"{e.get('episodes', e['sessions'])} | {e['sessions']} | {e['status']} | "
+            f"{e.get('escalate_to') or ''} | {ba_txt} |"
         )
     lines.append("")
 

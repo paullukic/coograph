@@ -5,10 +5,13 @@ Three modes, one parser:
 
   SessionEnd hook      Parse this session's transcript (transcript_path in
                        the payload) and write its records.
-  SessionStart hook    Catch up sibling transcripts that were never captured
-                       (killed sessions), time-boxed, then print one status
-                       line so the user and the agent see whether Retro has
-                       something to say. Runs only for source startup/resume.
+  SessionStart hook    source startup/resume: catch up sibling transcripts
+                       that were never captured (killed sessions), time-boxed.
+                       source compact: capture this session's own transcript,
+                       because a session that runs for a day compacts many
+                       times and would otherwise report nothing until it ends.
+                       Either way, print one status line so the user and the
+                       agent see whether Retro has something to say.
   --backfill <dir>     Parse every *.jsonl in a directory, idempotently.
                        Gives a project data on day one.
 
@@ -26,6 +29,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -49,6 +53,16 @@ CATCHUP_MAX_FILES = 20
 CATCHUP_BUDGET_SECONDS = 2.0
 TRANSCRIPT_MAX_BYTES = 200 * 1024 * 1024
 CATCHUP_SOURCES = {"", "startup", "resume"}
+# Compaction is the only hook event a marathon session fires repeatedly, so it
+# is where a long session gets to report. Capture is idempotent on message
+# count and replaces the session's records, so re-capturing never double-counts.
+SELF_CAPTURE_SOURCES = {"compact"}
+
+# Defect detector: a fix landing on a file a recent non-fix commit touched.
+FIX_SUBJECT_RE = re.compile(r"^(?:fix|hotfix|revert)\b", re.IGNORECASE)
+DEFECT_LOOKBACK_DAYS_DEFAULT = 14
+DEFECT_MAX_SIGNALS = 20
+GIT_TIMEOUT_SECONDS = 5.0
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 SEARCH_TOOLS = {"Grep", "Glob"}
@@ -269,6 +283,81 @@ def _dep_command(command: str) -> bool:
     return len(rest) >= 2
 
 
+# ---------------------------------------------------------------------------
+# Defect detector
+# ---------------------------------------------------------------------------
+
+def _git(cwd: Path, *args: str) -> str:
+    """git output, or '' for any failure. Never raises, never blocks capture."""
+    try:
+        out = subprocess.run(
+            ["git", "--no-pager", *args],
+            cwd=str(cwd), capture_output=True, text=True,
+            timeout=GIT_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout if out.returncode == 0 else ""
+
+
+def _commits(cwd: Path, since: str) -> list[tuple[str, str, list[str]]]:
+    """[(short_sha, subject, [paths])] for commits since an ISO timestamp."""
+    raw = _git(cwd, "log", f"--since={since}", "--name-only", "--no-merges",
+               "--pretty=format:%x00%h%x1f%s")
+    if not raw:
+        return []
+    out: list[tuple[str, str, list[str]]] = []
+    for chunk in raw.split("\x00"):
+        if not chunk.strip():
+            continue
+        head, _, body = chunk.partition("\n")
+        sha, _, subject = head.partition("\x1f")
+        paths = [ln.strip() for ln in body.splitlines() if ln.strip()]
+        if sha:
+            out.append((sha.strip(), subject.strip(), paths))
+    return out
+
+
+def detect_defects(cwd: Path, parsed: Parsed, lookback_days: int) -> list[tuple[str, dict]]:
+    """A fix commit landing on a file a recent non-fix commit touched.
+
+    Scoped to the session's own window so a signal is attributable to the work
+    that produced it. Evidence is paths and abbreviated hashes only: never a
+    commit message, never a diff.
+    """
+    if not parsed.started:
+        return []
+    fixes = _commits(cwd, parsed.started)
+    if not fixes:
+        return []
+    fixes = [c for c in fixes if FIX_SUBJECT_RE.match(c[1])]
+    if not fixes:
+        return []
+    # One lookback window covers every fix in this session.
+    history = _commits(cwd, f"{lookback_days + 1}.days.ago")
+    origin: dict[str, tuple[str, int]] = {}
+    for idx, (sha, subject, paths) in enumerate(history):
+        if FIX_SUBJECT_RE.match(subject):
+            continue
+        for path in paths:
+            origin.setdefault(path, (sha, idx))
+    found: list[tuple[str, dict]] = []
+    seen: set[tuple[str, str]] = set()
+    for sha, _subject, paths in fixes:
+        for path in paths:
+            hit = origin.get(path)
+            if not hit or hit[0] == sha:
+                continue
+            key = (sha, path)
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append((path, {"path": path, "fix": sha, "origin": hit[0], "days": lookback_days}))
+            if len(found) >= DEFECT_MAX_SIGNALS:
+                return found
+    return found
+
+
 def detect(parsed: Parsed, cwd: Path, rules: dict | None) -> list[dict]:
     sid = parsed.session_id
     records: list[dict] = []
@@ -358,8 +447,23 @@ def detect(parsed: Parsed, cwd: Path, rules: dict | None) -> list[dict]:
             })
 
     # user-correction (heuristic) ----------------------------------------
+    # A violation, not a bare event: the analyzer clusters per rule, so a
+    # correction recorded against rule "none" could never reach a proposal.
+    # Heuristic confidence still means it needs the higher thresholds.
     for c in parsed.corrections:
-        rec("event", "none", "user-correction", "heuristic", c)
+        rec("violation", "user-correction", "user-correction", "heuristic", c)
+
+    # defect -------------------------------------------------------------
+    # Git is the only place a shipped bug is visible: a fix landing on a file
+    # a recent non-fix commit touched. Absent git, absent repo or any failure
+    # means no signal, never a failed capture.
+    lookback = DEFECT_LOOKBACK_DAYS_DEFAULT
+    if rules:
+        raw = (rules.get("thresholds") or {}).get("defect_lookback_days")
+        if isinstance(raw, int) and raw > 0:
+            lookback = raw
+    for _path, evidence in detect_defects(cwd, parsed, lookback):
+        rec("violation", "defect", "defect", "deterministic", evidence)
 
     # new-dependency ----------------------------------------------------
     for u in parsed.tool_uses:
@@ -490,14 +594,21 @@ def _hook(payload: dict) -> int:
 
     if event == "SessionStart":
         source = str(payload.get("source") or "")
-        if transcript and source in CATCHUP_SOURCES and rules is not None:
+        if transcript and rules is not None:
             tpath = Path(transcript)
-            backfill(
-                tpath.parent, cwd,
-                budget_seconds=CATCHUP_BUDGET_SECONDS,
-                max_files=CATCHUP_MAX_FILES,
-                skip_stem=tpath.stem,
-            )
+            if source in CATCHUP_SOURCES:
+                backfill(
+                    tpath.parent, cwd,
+                    budget_seconds=CATCHUP_BUDGET_SECONDS,
+                    max_files=CATCHUP_MAX_FILES,
+                    skip_stem=tpath.stem,
+                )
+            elif source in SELF_CAPTURE_SOURCES:
+                # A session that runs for a day compacts repeatedly and
+                # reaches SessionEnd late or never. Capture it as it stands:
+                # capture_one skips an unchanged message count and
+                # replace_session swaps this session's records atomically.
+                capture_one(tpath, cwd, rules, signals.known_sessions(cwd))
         line = signals.status_line(cwd)
         if line:
             print(line)

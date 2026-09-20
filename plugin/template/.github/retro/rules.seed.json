@@ -1,11 +1,14 @@
 {
   "version": 1,
-  "seed_version": 1,
+  "seed_version": 2,
   "rules": [
     {
       "id": "graph-first",
       "title": "Code-graph first: query the graph before Grep/Glob",
-      "source": {"file": "CLAUDE.md", "anchor": "HARD RULE, CODE-GRAPH FIRST"},
+      "source": {
+        "file": "CLAUDE.md",
+        "anchor": "HARD RULE, CODE-GRAPH FIRST"
+      },
       "enforcement": "prose",
       "hard": true,
       "detector": "graph-first",
@@ -16,7 +19,10 @@
     {
       "id": "openspec-gate",
       "title": "OpenSpec or stop: 2+ file changes need an approved proposal",
-      "source": {"file": "CLAUDE.md", "anchor": "HARD RULE, OPENSPEC OR STOP"},
+      "source": {
+        "file": "CLAUDE.md",
+        "anchor": "HARD RULE, OPENSPEC OR STOP"
+      },
       "enforcement": "prose",
       "hard": true,
       "detector": "openspec-gate",
@@ -27,7 +33,10 @@
     {
       "id": "scope",
       "title": "Edits stay inside the active OpenSpec's tasks.md file list",
-      "source": {"file": ".claude/hooks/warn-scope.py", "anchor": "warn-scope"},
+      "source": {
+        "file": ".claude/hooks/warn-scope.py",
+        "anchor": "warn-scope"
+      },
       "enforcement": "hook-warn",
       "hard": false,
       "detector": "scope-warning",
@@ -38,7 +47,10 @@
     {
       "id": "generated-files",
       "title": "Never hand-edit generated files",
-      "source": {"file": ".claude/hooks/block-generated.py", "anchor": "block-generated"},
+      "source": {
+        "file": ".claude/hooks/block-generated.py",
+        "anchor": "block-generated"
+      },
       "enforcement": "hook-block",
       "hard": false,
       "detector": "generated-file-block",
@@ -49,7 +61,10 @@
     {
       "id": "no-new-deps",
       "title": "No new dependencies without explicit user approval",
-      "source": {"file": "CLAUDE.md", "anchor": "Critical Rules"},
+      "source": {
+        "file": "CLAUDE.md",
+        "anchor": "Critical Rules"
+      },
       "enforcement": "prose",
       "hard": false,
       "detector": "new-dependency",
@@ -60,11 +75,42 @@
     {
       "id": "preserve-features",
       "title": "Preserve all existing features unless the ticket says remove",
-      "source": {"file": ".github/copilot-instructions.md", "anchor": "Implementation Safety"},
+      "source": {
+        "file": ".github/copilot-instructions.md",
+        "anchor": "Implementation Safety"
+      },
       "enforcement": "prose",
       "hard": false,
       "detector": null,
       "added": "2026-09-19",
+      "last_triggered": null,
+      "last_changed": null
+    },
+    {
+      "id": "user-correction",
+      "title": "Repeated user corrections on the same theme mean an instruction is missing or unclear",
+      "source": {
+        "file": "CLAUDE.md",
+        "anchor": "Communication Style"
+      },
+      "enforcement": "prose",
+      "hard": false,
+      "detector": "user-correction",
+      "added": "2026-09-20",
+      "last_triggered": null,
+      "last_changed": null
+    },
+    {
+      "id": "defect",
+      "title": "A fix commit landing on a file a recent change touched: the guardrails missed a defect",
+      "source": {
+        "file": ".github/copilot-instructions.md",
+        "anchor": "Workflow"
+      },
+      "enforcement": "prose",
+      "hard": false,
+      "detector": "defect",
+      "added": "2026-09-20",
       "last_triggered": null,
       "last_changed": null
     }
@@ -77,16 +123,43 @@
     "prune_sessions": 10,
     "instruction_token_budget": 8000,
     "retro_prompt_min_sessions": 3,
-    "bootstrap_min_archives": 10
+    "bootstrap_min_archives": 10,
+    "defect_lookback_days": 14
   },
   "correction_patterns": [
-    {"id": "no", "regex": "^\\s*no[,.! ]", "enabled": true},
-    {"id": "i-said", "regex": "\\bI said\\b", "enabled": true},
-    {"id": "again", "regex": "\\bagain\\b", "enabled": true},
-    {"id": "stop", "regex": "\\bstop\\b", "enabled": true},
-    {"id": "wrong", "regex": "\\bwrong\\b", "enabled": true},
-    {"id": "not-what-i", "regex": "\\bnot what I\\b", "enabled": true}
+    {
+      "id": "no",
+      "regex": "^\\s*no[,.! ]",
+      "enabled": true
+    },
+    {
+      "id": "i-said",
+      "regex": "\\bI said\\b",
+      "enabled": true
+    },
+    {
+      "id": "again",
+      "regex": "\\bagain\\b",
+      "enabled": true
+    },
+    {
+      "id": "stop",
+      "regex": "\\bstop\\b",
+      "enabled": true
+    },
+    {
+      "id": "wrong",
+      "regex": "\\bwrong\\b",
+      "enabled": true
+    },
+    {
+      "id": "not-what-i",
+      "regex": "\\bnot what I\\b",
+      "enabled": true
+    }
   ],
-  "retention": {"max_sessions": 500},
+  "retention": {
+    "max_sessions": 500
+  },
   "last_retro": null
 }
