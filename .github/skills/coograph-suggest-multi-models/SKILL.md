@@ -1,6 +1,6 @@
 ---
 name: coograph-suggest-multi-models
-description: Suggest which model each Coograph agent should run on, for this project or for the ticket in hand, with a reason and an estimated cost delta per line. Use when the user asks about per-task models, wants to change an existing mapping, or wants to re-enable model selection in a project that turned it off.
+description: Suggest which model each Coograph agent should run on, for this project or for the ticket in hand, with a reason and an estimated cost delta per line. Claude Code only for now. Use when the user asks about per-task models, wants to change an existing mapping, or wants to re-enable model selection in a project that turned it off.
 argument-hint: Optional. "project" suggests a saved mapping; "task" suggests one for the ticket in hand. Default is whichever fits the conversation.
 license: MIT
 metadata:
@@ -47,7 +47,7 @@ Adjust when the work says so. A one-file change with an obvious fix does not nee
 
 1. **Read the current state** from `openspec/config.yaml`, the `models` block: `mode` (`unset`, `off`, `preset`, `per-task`) and any saved `preset`. Missing block means `unset`.
 2. **Decide the scope.** A ticket in progress means suggest for the task; otherwise suggest a saved mapping for the project. If the user named one, use that.
-3. **Check the tool can honour it.** A per-invocation model override works in Claude Code. For any other tool, say plainly that the mapping cannot be applied there and stop rather than writing config that will do nothing.
+3. **Check the tool can honour it.** A per-invocation model override works in Claude Code and nowhere else today. On any other tool, say so plainly, point at https://github.com/paullukic/coograph/issues/27, and stop rather than writing config that will do nothing. The catalogue below is Anthropic-only, so the advice would not even be meaningful elsewhere.
 4. **Produce the table.** One row per agent you propose to change: agent, model, a one-line reason grounded in this project or ticket, and the cost delta against the session model. Say which figures are estimates.
 5. **Offer the edit.** The user may change any line, accept all, or decline. Nothing is written before they answer.
 6. **Write it.** On accept, update the `models` block in `openspec/config.yaml`: set `mode` (`preset` for a saved mapping, `per-task` if they want to be asked each time) and the `preset` map. A task-scoped choice is used for that task only and is not written to disk.
