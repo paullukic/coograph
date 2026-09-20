@@ -731,6 +731,37 @@ class DefectDetectorTests(unittest.TestCase):
         self.assertEqual(cap.detect_defects(self.root, parsed, 14), [])
 
 
+class EpisodeFromRealCaptureTests(unittest.TestCase):
+    """The stamps a real capture produces, not hand-built records.
+
+    A synthetic record can carry any timestamp. Capture stamping every record
+    with the session end would collapse a week into one episode, and a unit
+    test over hand-built records would never notice.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = make_project(Path(self.tmp.name) / "proj")
+        self.tdir = Path(self.tmp.name) / "transcripts"
+        self.tdir.mkdir()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_one_session_over_three_days_is_three_episodes(self) -> None:
+        t = Transcript("marathon")
+        for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+            t.at = f"{day}T10:00:00.000Z"
+            t.result(t.tool("Bash", command="npm install left-pad"))
+        path = t.write(self.tdir / "marathon.jsonl")
+        rules = sig.load_rules(self.root)
+        cap.capture_one(path, self.root, rules, sig.known_sessions(self.root))
+        recs = [r for r in read_signals(self.root) if r["rule"] == "no-new-deps"]
+        self.assertEqual(len(recs), 3)
+        self.assertEqual(len(sig.episodes_of(recs)), 3, "one session, three days, three episodes")
+        self.assertEqual(len({r["session_id"] for r in recs}), 1)
+
+
 class EpisodeTests(unittest.TestCase):
     """Thresholds count session-days, so long sessions can cross them."""
 

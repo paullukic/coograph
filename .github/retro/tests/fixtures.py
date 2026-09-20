@@ -37,9 +37,14 @@ class Transcript:
         self.lines: list[dict] = []
         self._n = 0
         self._tool_n = 0
+        self.at = ""  # pin every following line to this moment when set
 
     # -- internals ----------------------------------------------------------
     def _ts(self) -> str:
+        # Set `.at` to pin every following line to one moment, for tests that
+        # need a session to span several days.
+        if self.at:
+            return self.at
         self._n += 1
         return f"2026-09-{10 + self._n // 1000:02d}T10:{(self._n // 60) % 60:02d}:{self._n % 60:02d}.000Z"
 
