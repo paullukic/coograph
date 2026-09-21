@@ -180,3 +180,35 @@ but a project's own `rules.json` is never overwritten, so an existing project ke
 whatever `enforcement` it already recorded until its next retro flips it. Expect the
 hooks to fire while the registry still reads `prose`; the signals are recorded either
 way and the next report reconciles it.
+
+## Writing a hook for a rule
+
+Three things bite in order, and the first two are silent.
+
+**1. Emit only if nothing else observes the rule.** A hook records a signal through
+`_coograph_signals` only when its rule has **no detector in `capture-signals.py`**. Today that is
+`scope` and `generated-files`, and only those. `graph-first`, `openspec-gate`, `no-new-deps`,
+`defect` and `user-correction` are recorded from the transcript already; a hook that records them
+too is counted twice, because `replace_session` keeps hook-origin records, `summarize` counts every
+violation equally, and `retro.py` never reads `origin`. The rule then crosses its threshold on the
+hook's own warnings, and the rung after `hook-warn` is `hook-block`. The hook warns, the detector
+measures, and the hook worked if the detector's count falls.
+`tests/test_capture.py::HookEmissionRulesTests` enforces this.
+
+**2. Unknown evidence keys vanish without an error.** `ALLOWED_EVIDENCE` is a per-detector
+allow-list and `make_record` filters against it silently. Emit a key the detector does not declare
+and the record is written with `"evidence": {}` — accepted, stored, useless. Look up your
+detector's keys in that mapping before you emit, and assert on them in a test, the way
+`test_warn_scope_emits` does.
+
+**3. A hook cannot be verified by the session that wrote it.** `.claude/settings.json` is read at
+session start, so new wiring is inert until a restart, and any artifact your own probe leaves
+behind carries a session id you invented. Prove it with a nested run that names its own session:
+
+```bash
+claude -p "<one instruction that triggers the hook>" --allowedTools Write Bash   --permission-mode acceptEdits --session-id 11111111-aaaa-4bbb-8ccc-000000000001
+```
+
+The markers and records the hook writes then carry that id. Run the negative case too, keep the
+probe non-mutating (`--dry-run`), delete the artifacts afterwards, and remember the nested session
+is itself captured and will show up in the next report.
