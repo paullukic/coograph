@@ -16,7 +16,7 @@ cp -r .github/                "$TARGET/.github/"
 cp CLAUDE.md                  "$TARGET/CLAUDE.md"
 cp -r .claude/                "$TARGET/.claude/"
 
-# Cursor / Windsurf (if using)
+# Cursor / Devin Desktop (if using)
 cp AGENTS.md                  "$TARGET/AGENTS.md"
 
 # OpenSpec workflow (recommended)
@@ -149,12 +149,12 @@ There is no single command that works everywhere — each tool registers custom 
 | **Codex CLI** | `$coograph-init` **or** "initialize the project" | `.agents/skills/coograph-init/SKILL.md` |
 | **OpenCode** | `/coograph-init` | `.opencode/commands/coograph-init.md` |
 | **Cursor** | `/coograph-init` (string match — no menu) | `.cursor/rules/coograph.mdc` § Invocation |
-| **Windsurf** | `/coograph-init` (string match) | `.windsurfrules` § Invocation |
+| **Devin Desktop** | `/coograph-init` (string match) | `.windsurfrules` § Invocation |
 | **Aider** | `/coograph-init` (string match) | `CONVENTIONS.md` § Invocation |
 | **Cline** | `/coograph-init` (string match) | `.clinerules` § Invocation |
 
 **Codex CLI quirk:** Codex reserves `/` for ~30 built-in commands (`/model`, `/permissions`, `/diff`, etc.) — there is no project-level custom slash registration. Custom skills are invoked with `$skill-name` (explicit) or auto-trigger when the user's request matches the skill's description. Verify the skill loaded with `/skills`.
 
-**Cursor / Windsurf / Aider / Cline** have no native slash registration either, but the agent in those tools reads the loaded rules/conventions file on every turn — so when the user types `/coograph-init` literally, the rule fires and the agent runs `.github/skills/coograph-init/SKILL.md`. Natural-language paraphrases ("initialize the project", "set up coograph") work the same way in every tool.
+**Cursor / Devin Desktop / Aider / Cline** have no native slash registration either, but the agent in those tools reads the loaded rules/conventions file on every turn — so when the user types `/coograph-init` literally, the rule fires and the agent runs `.github/skills/coograph-init/SKILL.md`. Natural-language paraphrases ("initialize the project", "set up coograph") work the same way in every tool.
 
-For Cursor/Windsurf/Aider/Cline you must copy the matching config file from `templates/<tool>/` into your project root before the rule will fire.
+For Cursor/Devin Desktop/Aider/Cline you must copy the matching config file from `templates/<tool>/` into your project root before the rule will fire. Devin Desktop's directory is still `templates/windsurf/`, and the file it writes is still `.windsurfrules`, because that is what the tool reads.

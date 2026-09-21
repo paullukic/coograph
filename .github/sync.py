@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import subprocess
 import sys
@@ -112,16 +113,30 @@ MODELS_BLOCK = """
 # below. `per-task` suggests a map for each ticket before using it.
 #   /coograph-suggest-multi-models   propose or change a mapping
 #   /coograph-disable-multi-models   turn it off for good
+#
+# `catalog` is yours. It binds each alias `preset` uses to the model id your
+# tool actually loads, plus rough per-million-token rates so a suggestion can
+# state a cost delta. Coograph ships none: the ids below are an example for
+# Anthropic models, not a default. Every supported tool wants a different id
+# form -- Cursor `composer-2`, OpenCode `provider/model-id`, Copilot only its
+# own vendor -- so the catalog is the project's to declare and to keep correct.
+# With no catalog, nothing changes: the built-in Anthropic aliases still work
+# on Claude Code exactly as before.
 models:
   mode: unset          # unset | off | preset | per-task
-  # preset:            # aliases: fable | opus | sonnet | haiku
-  #   explore: haiku
-  #   search: haiku
-  #   verifier: sonnet
-  #   reviewer: opus
-  #   debugger: opus
-  #   planner: opus
-  #   retro: opus
+  # catalog:           # yours to declare: alias -> model id + rough rates
+  #   cheap:   { id: claude-haiku-4-5, in: 1,  out: 5  }
+  #   mid:     { id: claude-sonnet-5,  in: 2,  out: 10 }
+  #   capable: { id: claude-opus-5,    in: 5,  out: 25 }
+  #   top:     { id: claude-fable-5-1, in: 10, out: 50 }
+  # preset:            # role -> catalog alias
+  #   explore: cheap
+  #   search: cheap
+  #   verifier: mid
+  #   reviewer: capable
+  #   debugger: capable
+  #   planner: capable
+  #   retro: capable
 """
 
 
@@ -152,6 +167,58 @@ def _seed_models_block(path: Path, prefix: str, dry_run: bool = False) -> int:
         log.warning("  models block not seeded: %s", e)
         return 0
     log.info("  %sopenspec/config.yaml  models block seeded", prefix)
+    return 1
+
+
+CATALOG_LINES = """  # catalog:           # yours to declare: alias -> model id + rough rates
+  #   cheap:   { id: claude-haiku-4-5, in: 1,  out: 5  }
+  #   mid:     { id: claude-sonnet-5,  in: 2,  out: 10 }
+  #   capable: { id: claude-opus-5,    in: 5,  out: 25 }
+  #   top:     { id: claude-fable-5-1, in: 10, out: 50 }
+"""
+
+
+def _seed_catalog_block(path: Path, prefix: str, dry_run: bool = False) -> int:
+    """Add the commented `catalog` example to a config that already has `models`.
+
+    _seed_models_block returns early once `models:` exists, so a project that
+    got the models block before the catalog existed would never see it. The
+    lines are inserted inside the block, right after `mode:`, so uncommenting
+    them lands at the right indentation rather than at the end of the file.
+    """
+    target = path / "openspec" / "config.yaml"
+    if not target.exists():
+        return 0
+    try:
+        body = target.read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    if "models:" not in body or "catalog:" in body:
+        return 0
+
+    lines = body.splitlines(keepends=True)
+    out, inserted = [], False
+    in_models = False
+    for line in lines:
+        out.append(line)
+        if line.startswith("models:"):
+            in_models = True
+            continue
+        if in_models and not inserted and re.match(r"\s+mode:", line):
+            out.append(CATALOG_LINES)
+            inserted = True
+    if not inserted:
+        return 0
+
+    if dry_run:
+        log.info("  %sopenspec/config.yaml  would seed catalog block", prefix)
+        return 0
+    try:
+        target.write_text("".join(out), encoding="utf-8")
+    except OSError as e:
+        log.warning("  catalog block not seeded: %s", e)
+        return 0
+    log.info("  %sopenspec/config.yaml  catalog block seeded", prefix)
     return 1
 
 
@@ -226,7 +293,7 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
     total = 0
 
     # Always-copy: .github/skills/ is consumed by every supported tool
-    # (Claude Code, VS Code Copilot, Codex CLI, OpenCode, Cursor, Windsurf,
+    # (Claude Code, VS Code Copilot, Codex CLI, OpenCode, Cursor, Devin Desktop,
     # Aider, Cline). Mirror what coograph-init does at install time.
     skills_src = TEMPLATE_ROOT / ".github" / "skills"
     if skills_src.exists():

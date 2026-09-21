@@ -15,7 +15,7 @@
   <a href="https://codespaces.new/paullukic/coograph"><img src="https://github.com/codespaces/badge.svg" alt="Open in GitHub Codespaces" height="20"></a>
 </p>
 
-Reusable AI coding assistant configuration for any project. Works with **Claude Code**, **VS Code Copilot**, **Codex CLI**, **OpenCode**, **Cursor**, **Windsurf**, **Aider**, and **Cline** — eight tools, one unified workflow.
+Reusable AI coding assistant configuration for any project. Works with **Claude Code**, **VS Code Copilot**, **Codex CLI**, **OpenCode**, **Cursor**, **Devin Desktop** (formerly Windsurf), **Aider**, and **Cline** — eight tools, one unified workflow.
 
 Ships a structured workflow, specialized agents with anti-hallucination guardrails, Claude Code lifecycle hooks, and an optional code-graph MCP server that replaces brute-force file searching with targeted SQLite queries.
 
@@ -49,7 +49,7 @@ Trigger the initializer in your AI tool's chat. Each tool has its own invocation
 | **Codex CLI** | `$coograph-init` (explicit skill) **or** "initialize the project" (auto-trigger) — see [Codex CLI Notes](#codex-cli-notes) | `.agents/skills/coograph-init/SKILL.md` (Codex scans repo root). Codex reserves `/` for built-ins, so custom workflows use `$name` |
 | **OpenCode** | `/coograph-init` | `.opencode/commands/coograph-init.md` |
 | **Cursor** | `/coograph-init` (string match — no autocomplete) | `.cursor/rules/coograph.mdc` § Invocation |
-| **Windsurf** | `/coograph-init` (string match) | `.windsurfrules` § Invocation |
+| **Devin Desktop** | `/coograph-init` (string match) | `.windsurfrules` § Invocation. Renamed from Windsurf on 2026-06-02; the legacy file at the workspace root is [still read](https://docs.devin.ai/desktop/devin-desktop-faq), though `.devin/rules/` now takes precedence |
 | **Aider** | `/coograph-init` (string match) | `CONVENTIONS.md` § Invocation |
 | **Cline** | `/coograph-init` (string match) | `.clinerules` § Invocation |
 
@@ -219,7 +219,7 @@ Eight tools, three of them have hook APIs we can use:
 | **OpenCode** | ✅ shipped | `.opencode/plugin/log-bash.ts` — uses OpenCode's `tool.execute.before` plugin event. Loaded automatically by OpenCode at session start. |
 | **VS Code Copilot** | ⛔ no hook API | Copilot Chat does not expose a pre-tool-use hook in any public API as of 2026-05. Commands run inside the VS Code process with no interception point. Falls back to VS Code's own command history if you need a trail. |
 | **Cursor** | ⛔ no hook API | Rules files only; no pre-tool-use hook surface. Use Cursor's terminal history. |
-| **Windsurf** | ⛔ no hook API | Same — rules-only, no hook system exposed. |
+| **Devin Desktop** | ⛔ no hook API | Same — rules-only, no hook system exposed. |
 | **Aider** | ⛔ no shell-level hook | Aider has lint/test hooks but no pre-shell-execute hook. Use shell-level `trap DEBUG` if you must. |
 | **Cline** | ⛔ no hook API | VS Code extension with no public hook surface. |
 
@@ -293,7 +293,7 @@ Claude Code keeps every past transcript under `~/.claude/projects/<slug>/`. Init
 | **Claude Code** / Cowork plugin | ✅ all detectors | ✅ scope, generated files | ✅ | ✅ |
 | **Codex CLI** | ⛔ | ⛔ (Bash audit log only) | ⛔ | ✅ |
 | **OpenCode** | ⛔ | ⛔ (Bash audit log only) | ⛔ | ✅ |
-| **VS Code Copilot**, **Cursor**, **Windsurf**, **Aider**, **Cline** | ⛔ | ⛔ | ⛔ | ✅ (`@Retro` agent in Copilot) |
+| **VS Code Copilot**, **Cursor**, **Devin Desktop**, **Aider**, **Cline** | ⛔ | ⛔ | ⛔ | ✅ (`@Retro` agent in Copilot) |
 
 Full detector table, registry format, thresholds, and commands: [`.github/retro/README.md`](.github/retro/README.md). The registry each project edits is `.github/retro/rules.json`, created from the shipped `rules.seed.json` and never overwritten by sync. Tests: `python -m unittest discover -s .github/retro/tests`.
 
@@ -419,7 +419,7 @@ Coograph stands on top of work done by many others.
 
 - [Tree-sitter](https://tree-sitter.github.io/) — parser frontend powering every language in the code graph
 - [Model Context Protocol](https://modelcontextprotocol.io/) — Anthropic's open standard the code-graph server speaks
-- [Anthropic Claude Code](https://docs.anthropic.com/claude/docs/claude-code), [GitHub Copilot](https://github.com/features/copilot), [OpenAI Codex CLI](https://github.com/openai/codex), [sst/opencode](https://opencode.ai), [Cursor](https://cursor.com), [Windsurf](https://windsurf.com), [Aider](https://aider.chat), [Cline](https://cline.bot) — the eight tools coograph plugs into
+- [Anthropic Claude Code](https://docs.anthropic.com/claude/docs/claude-code), [GitHub Copilot](https://github.com/features/copilot), [OpenAI Codex CLI](https://github.com/openai/codex), [sst/opencode](https://opencode.ai), [Cursor](https://cursor.com), [Devin Desktop](https://devin.ai/desktop), [Aider](https://aider.chat), [Cline](https://cline.bot) — the eight tools coograph plugs into
 - [D3](https://d3js.org/) — force-directed visualization
 - [SQLite](https://sqlite.org/) — the only database that earns its way into every machine
 

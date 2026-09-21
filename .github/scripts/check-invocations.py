@@ -129,6 +129,68 @@ def check_file(rel_path: str, role: str) -> list[str]:
     return fails
 
 
+
+# Number words the README and SETUP use for the tool count. A rename that drops
+# or adds a tool must not leave "eight tools" behind, which is exactly what the
+# Windsurf -> Devin Desktop rename nearly did.
+COUNT_WORDS = {
+    6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten",
+}
+
+# Files that state the count in prose, and the invocation table they must agree
+# with. The table is the source of truth; the prose is derived.
+COUNT_SOURCES = ("README.md", "SETUP.md")
+
+
+def _invocation_rows(text: str) -> int:
+    """Count data rows in the per-tool invocation table.
+
+    The table is the one whose header names the canonical skill trigger column;
+    rows start with `| **` and are not the separator.
+    """
+    rows = 0
+    in_table = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("|") and "Invoke with" in stripped:
+            in_table = True
+            continue
+        if in_table:
+            if not stripped.startswith("|"):
+                break
+            if set(stripped) <= set("|-: "):
+                continue
+            rows += 1
+    return rows
+
+
+def check_tool_count() -> list[str]:
+    """The stated tool count must match the invocation table it describes."""
+    fails: list[str] = []
+    table_rows = _invocation_rows((REPO_ROOT / "README.md").read_text(encoding="utf-8"))
+    if table_rows == 0:
+        return ["README.md: could not find the invocation table to count"]
+
+    expected = COUNT_WORDS.get(table_rows)
+    for rel in COUNT_SOURCES:
+        path = REPO_ROOT / rel
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for n, word in COUNT_WORDS.items():
+            if n == table_rows:
+                continue
+            for phrase in (f"{word} tools", f"{n} tools"):
+                if phrase in text:
+                    fails.append(
+                        f"{rel}:{_line_of(text, phrase)} says {phrase!r} but the "
+                        f"README invocation table has {table_rows} rows"
+                    )
+        if expected and f"{expected} tools" not in text and f"{table_rows} tools" not in text:
+            continue  # the file need not state a count at all
+    return fails
+
+
 def main() -> int:
     total = len(MANIFEST)
     passed = 0
@@ -144,9 +206,15 @@ def main() -> int:
             print(f"PASS {rel_path}")
             passed += 1
 
-    fail_count = total - passed
+    count_fails = check_tool_count()
+    for reason in count_fails:
+        print(f"FAIL {reason}")
+    if not count_fails:
+        print("PASS tool count matches the invocation table")
+
+    fail_count = total - passed + len(count_fails)
     print()
-    print(f"checked {total}  pass {passed}  fail {fail_count}")
+    print(f"checked {total + 1}  pass {passed + (0 if count_fails else 1)}  fail {fail_count}")
     return 1 if fail_count else 0
 
 

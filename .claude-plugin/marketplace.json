@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Coograph plugin marketplace",
-    "version": "1.5.0"
+    "version": "1.6.0"
   },
   "plugins": [
     {
       "name": "coograph",
       "source": "./plugin",
       "description": "Graph-first AI coding workflow: Plan, Propose, Apply, Review, Archive with OpenSpec gates, evidence-based agents, and guardrail hooks.",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "author": {
         "name": "Paul Lukic",
         "url": "https://github.com/paullukic"
