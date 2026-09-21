@@ -31,13 +31,27 @@ schema: spec-driven
 # below. `per-task` suggests a map for each ticket before using it.
 #   /coograph-suggest-multi-models   propose or change a mapping
 #   /coograph-disable-multi-models   turn it off for good
+#
+# `catalog` is yours. It binds each alias `preset` uses to the model id your
+# tool actually loads, plus rough per-million-token rates so a suggestion can
+# state a cost delta. Coograph ships none: the ids below are an example for
+# Anthropic models, not a default. Every supported tool wants a different id
+# form -- Cursor `composer-2`, OpenCode `provider/model-id`, Copilot only its
+# own vendor -- so the catalog is the project's to declare and to keep correct.
+# With no catalog, nothing changes: the built-in Anthropic aliases still work
+# on Claude Code exactly as before.
 models:
   mode: unset          # unset | off | preset | per-task
-  # preset:            # aliases: fable | opus | sonnet | haiku
-  #   explore: haiku
-  #   search: haiku
-  #   verifier: sonnet
-  #   reviewer: opus
-  #   debugger: opus
-  #   planner: opus
-  #   retro: opus
+  # catalog:           # yours to declare: alias -> model id + rough rates
+  #   cheap:   { id: claude-haiku-4-5, in: 1,  out: 5  }
+  #   mid:     { id: claude-sonnet-5,  in: 2,  out: 10 }
+  #   capable: { id: claude-opus-5,    in: 5,  out: 25 }
+  #   top:     { id: claude-fable-5-1, in: 10, out: 50 }
+  # preset:            # role -> catalog alias
+  #   explore: cheap
+  #   search: cheap
+  #   verifier: mid
+  #   reviewer: capable
+  #   debugger: capable
+  #   planner: capable
+  #   retro: capable

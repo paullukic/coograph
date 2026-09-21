@@ -12,14 +12,14 @@ The full procedure is in `.github/skills/coograph-init/SKILL.md`. Follow those s
 
 ## Steps (summary)
 
-1. **Gather info** — Ask the user: target project path, which AI tools to set up (multi-select: Claude Code, VS Code Copilot, Codex CLI, OpenCode, Cursor, Windsurf, Aider, Cline), sections to skip, project-specific rules, whether to enable code-graph, and whether to add global gitignore entries.
+1. **Gather info** — Ask the user: target project path, which AI tools to set up (multi-select: Claude Code, VS Code Copilot, Codex CLI, OpenCode, Cursor, Devin Desktop, Aider, Cline), sections to skip, project-specific rules, whether to enable code-graph, and whether to add global gitignore entries.
 
 2. **Detect tech stack** — Read the target project's manifest files (package.json, pom.xml, go.mod, Cargo.toml, pyproject.toml, tsconfig.json, etc.) and `src/` structure. Extract language, framework, ORM, testing, build tool, linter, commands, and project structure. Present findings and ask the user to confirm before proceeding.
 
 3. **Copy template files** — Copy only what's relevant to the selected tools:
    - Claude Code: `CLAUDE.md`, `.claude/commands/coograph-*.md`, `.claude/hooks/` (all scripts), `.claude/settings.json`
    - VS Code Copilot: `.github/agents/`, `AGENTS.md`
-   - Codex CLI, OpenCode, Cursor, Windsurf, Aider, Cline: per-tool files listed in SKILL.md § Step 3
+   - Codex CLI, OpenCode, Cursor, Devin Desktop, Aider, Cline: per-tool files listed in SKILL.md § Step 3
    - Always (shared by every tool): `.github/copilot-instructions.md`, `.github/instructions/`, `.github/skills/`, `openspec/config.yaml`
    - Do NOT copy `node_modules/`, `.omc/`, or `.claude/settings.local.json`
    - Ask before overwriting any existing file (overwrite / skip / section-by-section)

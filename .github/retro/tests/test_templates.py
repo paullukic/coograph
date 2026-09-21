@@ -38,6 +38,19 @@ class ModelsAreNeverDefaulted(unittest.TestCase):
                     if re.match(r"^\s+(explore|reviewer|debugger|planner|verifier|retro|search):", line):
                         self.fail(f"{path.name} ships a live preset entry: {line.strip()}")
 
+    def test_catalog_ships_commented_out(self) -> None:
+        """The catalogue is the project's. Shipping a live one picks a provider."""
+        for path in CONFIG_TEMPLATES:
+            with self.subTest(path=path.name):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn("catalog:", text,
+                              "the catalogue must be documented as an example")
+                for line in text.splitlines():
+                    if re.match(r"^\s*catalog:", line) and not line.lstrip().startswith("#"):
+                        self.fail(f"{path.name} ships a live catalog: {line.strip()}")
+                    if re.match(r"^\s+(cheap|mid|capable|top):\s*\{", line):
+                        self.fail(f"{path.name} ships a live catalog entry: {line.strip()}")
+
     def test_no_agent_pins_a_model(self) -> None:
         found = []
         for directory in AGENT_DIRS:
@@ -48,6 +61,34 @@ class ModelsAreNeverDefaulted(unittest.TestCase):
                 if head and re.search(r"^model:", head[0], re.MULTILINE):
                     found.append(agent.name)
         self.assertEqual(found, [], "agents must inherit unless the user opts in")
+
+
+class ReachIsStatedAccurately(unittest.TestCase):
+    """The suggestion must not promise tools it cannot reach, or refuse ones it can."""
+
+    SKILL = ROOT / ".github" / "skills" / "coograph-suggest-multi-models" / "SKILL.md"
+
+    def setUp(self) -> None:
+        self.text = self.SKILL.read_text(encoding="utf-8")
+
+    def test_the_five_delegating_tools_are_named(self) -> None:
+        for tool in ("Claude Code", "Cursor", "VS Code Copilot", "Codex CLI", "OpenCode"):
+            with self.subTest(tool=tool):
+                self.assertIn(tool, self.text)
+
+    def test_claude_code_is_no_longer_the_only_one(self) -> None:
+        self.assertNotIn("Claude Code only", self.text)
+        self.assertNotIn("and nowhere else", self.text)
+
+    def test_aider_and_cline_are_not_promised(self) -> None:
+        """They do not delegate. 'Coming soon' implies work that will not arrive."""
+        for tool in ("Aider", "Cline"):
+            with self.subTest(tool=tool):
+                self.assertIn(tool, self.text)
+        self.assertNotIn("coming soon", self.text.lower())
+
+    def test_the_catalogue_is_never_inferred(self) -> None:
+        self.assertIn("Never infer a catalogue", self.text)
 
 
 class CommandsCarryTheModelFooter(unittest.TestCase):

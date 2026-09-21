@@ -80,7 +80,7 @@ the skill and the analyzer but no capture.
 | Claude Code / Cowork plugin | all | scope, generated-files | yes | yes |
 | Codex CLI | none | none (Bash audit log only) | no | yes |
 | OpenCode | none | none (Bash audit log only) | no | yes |
-| Cursor, Windsurf, Aider, Cline | none | none | no | yes |
+| Cursor, Devin Desktop, Aider, Cline | none | none | no | yes |
 
 ## The registry
 

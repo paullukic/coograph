@@ -16,7 +16,7 @@ Every "copy" instruction below copies from the **template root**. Resolve it onc
 
 - **Repo mode** — this file is at `<coograph>/.github/skills/coograph-init/SKILL.md` inside a coograph checkout. Template root = `<coograph>`.
 - **Plugin mode** — this file is at `<plugin>/skills/coograph-init/SKILL.md` and `<plugin>/template/` exists (Claude Code or Cowork plugin install). Template root = `<plugin>/template/`. There is no coograph checkout and no `projects.json`: detect install state from files on disk and skip Step 8. Marketplace **Update** refreshes only the plugin's own skills, agents, and hooks; files this procedure copies into the project do not auto-update, so tell the user to re-run init to refresh them.
-- **Initialized-project mode** — this file is at `<project>/.github/skills/coograph-init/SKILL.md` in a project that was itself initialized (no `templates/` or `setup.sh` next to it). Template root = `<project>`. Per-tool files under `templates/` (Cursor, Windsurf, Aider, Cline) are unavailable here: if the user selects one of those tools, say so and point them to the plugin or a coograph checkout. Skip Step 8.
+- **Initialized-project mode** — this file is at `<project>/.github/skills/coograph-init/SKILL.md` in a project that was itself initialized (no `templates/` or `setup.sh` next to it). Template root = `<project>`. Per-tool files under `templates/` (Cursor, Devin Desktop, Aider, Cline) are unavailable here: if the user selects one of those tools, say so and point them to the plugin or a coograph checkout. Skip Step 8.
 
 The template root mirrors the coograph repo layout (`.github/…`, `.claude/…`, `templates/…`), so every path below resolves the same way in every mode.
 
@@ -33,7 +33,7 @@ Ask the user these questions one at a time (wait for each answer before proceedi
    - **Codex CLI** — `.agents/skills/coograph-init/SKILL.md` + `AGENTS.md` (Codex scans `.agents/skills/` from repo root for native slash)
    - **OpenCode** (sst/opencode) — `.opencode/commands/coograph-init.md` + `AGENTS.md` (native `/coograph-init` slash)
    - **Cursor** — `.cursor/rules/coograph.mdc` (from `templates/cursor/`)
-   - **Windsurf** — `.windsurfrules` (from `templates/windsurf/`)
+   - **Devin Desktop** — `.windsurfrules` (from `templates/windsurf/`)
    - **Aider** — `CONVENTIONS.md` (from `templates/aider/`)
    - **Cline** — `.clinerules` (from `templates/cline/`)
    - Note: `.github/copilot-instructions.md` and `.github/instructions/` (which contains `brutal-honesty.instructions.md`) are always copied — every tool reads or references them.
@@ -174,9 +174,9 @@ Copy files from the template root (see Template source) to the target project. O
 - `templates/cursor/.cursor/` → target project's `.cursor/` (preserves rules subdirectory structure)
 - Cursor has no native slash registration; the `coograph.mdc` rule tells the agent to follow `.github/skills/coograph-init/SKILL.md` whenever the user types `/coograph-init` (skills directory already supplied by the always-copy block).
 
-**For Windsurf:**
+**For Devin Desktop:**
 - `templates/windsurf/.windsurfrules` → target project root `.windsurfrules`
-- Windsurf has no native slash registration; the rule fires when the user types `/coograph-init` (skills directory already supplied by the always-copy block).
+- Devin Desktop (formerly Windsurf) has no native slash registration; the rule fires when the user types `/coograph-init` (skills directory already supplied by the always-copy block).
 
 **For Aider:**
 - `templates/aider/CONVENTIONS.md` → target project root `CONVENTIONS.md`
