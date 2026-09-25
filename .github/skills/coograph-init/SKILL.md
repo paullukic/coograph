@@ -149,7 +149,7 @@ Copy files from the template root (see Template source) to the target project. O
 
 **For Claude Code:**
 - `CLAUDE.md`
-- `.claude/commands/coograph-*.md` (every Coograph slash command: `/coograph-init` itself, so the project can re-init others, plus `/coograph-new-ticket`, `/coograph-plan`, `/coograph-review`, `/coograph-verify`, `/coograph-debug`, `/coograph-search`, `/coograph-retro`, which the copied `CLAUDE.md` references)
+- `.claude/commands/coograph-*.md` (every Coograph slash command: `/coograph-init` itself, so the project can re-init others, plus `/coograph-new-ticket`, `/coograph-plan`, `/coograph-review`, `/coograph-ultra-review`, `/coograph-verify`, `/coograph-debug`, `/coograph-search`, `/coograph-retro`, which the copied `CLAUDE.md` references)
 - `.claude/hooks/` (all hook scripts: block-generated, log-bash, report-graph, warn-scope, capture-signals, plus the shared `_coograph_guard.py` module and the `_coograph_signals.py` shim that loads `.github/retro/_coograph_signals.py`)
 - `.claude/settings.json` (wires the hooks into Claude Code lifecycle events)
 - Do NOT copy `.claude/settings.local.json` — that's per-machine personal overrides
@@ -311,6 +311,26 @@ uv --version
 Do NOT ask the user to install `uv` manually — install it automatically and report the result.
 If the install script fails (e.g. no internet, corporate proxy), fall back to `pip install 'mcp>=1.0.0,<2'` and use `python` instead of `uv` in MCP configs.
 
+**Pin the interpreter.** `uv run` resolves against the machine's *default* Python, not
+the newest one installed. `mcp>=1.0.0,<2` requires Python 3.10+, so on a machine whose
+default is older the server dies at start-up with
+`your requirements are unsatisfiable` — and the MCP host reports only
+`CONNECTION_CLOSED`, with the real cause buried in the server log.
+
+Check the default:
+```bash
+python --version
+```
+
+If it is below 3.10, every `uv run` invocation this procedure writes or runs — the MCP
+configs in 6e, the git hooks in 6h, and the build command in 6f — must carry an explicit
+`-p <version>` pin immediately after `run` (`uv` downloads a managed interpreter on
+demand, so no manual install is needed):
+```bash
+uv run -p 3.12 --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py --build
+```
+Report the pin to the user, since it has to stay in the committed config.
+
 ### 6d. Add `.code-graph/` to `.gitignore`
 
 Append `.code-graph/` to the target project's `.gitignore` if not already present.
@@ -321,6 +341,8 @@ The graph database is local/generated — it must not be committed.
 
 By this point `uv` should be installed (step 6c). If step 6c fell back to pip, use `"command": "python"` and `"args": ["${workspaceFolder}/.github/code-graph/server.py"]` in all configs below instead of the `uv` variant.
 
+The configs below carry the `-p 3.12` interpreter pin from step 6c. Drop it only when the machine's default `python` is already 3.10 or newer; keeping it is harmless either way.
+
 **VS Code Copilot** → create or merge into `.vscode/mcp.json`:
 ```json
 {
@@ -328,7 +350,7 @@ By this point `uv` should be installed (step 6c). If step 6c fell back to pip, u
     "code-graph": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--with-requirements", "${workspaceFolder}/.github/code-graph/requirements.txt", "${workspaceFolder}/.github/code-graph/server.py"]
+      "args": ["run", "-p", "3.12", "--with-requirements", "${workspaceFolder}/.github/code-graph/requirements.txt", "${workspaceFolder}/.github/code-graph/server.py"]
     }
   }
 }
@@ -341,7 +363,7 @@ By this point `uv` should be installed (step 6c). If step 6c fell back to pip, u
     "code-graph": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"]
+      "args": ["run", "-p", "3.12", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"]
     }
   }
 }
@@ -354,14 +376,14 @@ By this point `uv` should be installed (step 6c). If step 6c fell back to pip, u
     "code-graph": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"]
+      "args": ["run", "-p", "3.12", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"]
     }
   }
 }
 ```
 
 If `Both` was selected in Step 1, write all applicable configs.
-Do NOT overwrite existing MCP configs — merge `code-graph` key into the `servers`/`mcpServers` object.
+Do NOT overwrite existing MCP configs — merge the `code-graph` key into the `servers`/`mcpServers` object and leave every other key alone. `sync.py` follows the same rule on later pulls, so a hand-edited config survives.
 
 ### 6f. Build the initial graph
 

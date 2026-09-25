@@ -102,6 +102,10 @@ Every finding that references specific code **must** include a verbatim quote fr
 - Vague feedback: "this could be improved" without file:line and evidence.
 - Soft language: "might be a concern" — state the problem directly or drop it.
 
+## When this review is not enough
+
+End the report with one line offering `/coograph-ultra-review` when the change is big: more than ~15 files, a commit stack going to people for approval, or anything with queue jobs, locks, state transitions, data migrations or cross-service contracts. Say what it is (several hostile reviewers, every finding attacked by refuters) and what it costs (about a million tokens, twenty minutes). Do not run it yourself.
+
 $ARGUMENTS
 
 ## Models

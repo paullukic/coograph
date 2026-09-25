@@ -238,6 +238,7 @@ Agents must **never** auto-delegate via `runSubagent` — subagents don't receiv
 | Situation | Agent |
 |-----------|-------|
 | Code review / conventions | `@Reviewer` |
+| Deep review of a big change before approvals (many files, queue jobs, locks, state transitions, migrations, cross-service contracts) — optional, costly | `coograph-ultra-review` skill (one `@Reviewer` per dimension, then refuters) |
 | Bug investigation / build errors | `@Debugger` |
 | New ticket / unclear requirements | `@Planner` |
 | Completion evidence / test verification | `@Verifier` |
