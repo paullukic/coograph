@@ -115,7 +115,7 @@ def make_project(root: Path, *, graph: bool = True, rules: bool = True,
     (root / ".claude" / "hooks").mkdir(parents=True, exist_ok=True)
     for name in ("_coograph_signals.py", "_coograph_guard.py", "capture-signals.py",
                  "warn-scope.py", "block-generated.py",
-                 "no-new-deps-warn.py", "defect-warn.py"):
+                 "no-new-deps-warn.py", "defect-warn.py", "openspec-gate-warn.py"):
         shutil.copyfile(HOOKS / name, root / ".claude" / "hooks" / name)
     (root / ".github" / "skills" / "coograph-init").mkdir(parents=True, exist_ok=True)
     (root / ".github" / "skills" / "coograph-init" / "SKILL.md").write_text("marker\n")

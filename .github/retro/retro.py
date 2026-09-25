@@ -285,6 +285,8 @@ def _adherence(sessions: dict[str, dict]) -> dict:
 
 
 def build_report(cwd: Path, sig, rules: dict, records: list[dict]) -> dict:
+    all_sessions = _session_map(records)
+    records = sig.drop_ignored(records, rules)
     summary = sig.summarize(records, rules)
     sessions = _session_map(records)
     starts = sorted(str(e.get("started", "")) for e in sessions.values() if e.get("started"))
@@ -313,6 +315,7 @@ def build_report(cwd: Path, sig, rules: dict, records: list[dict]) -> dict:
             "since_last_retro": summary["since_last_retro"],
             "first": starts[0] if starts else None,
             "last": starts[-1] if starts else None,
+            "ignored_sessions": len(all_sessions) - len(sessions),
         },
         "thresholds": rules["thresholds"],
         "per_rule": per_rule,
@@ -329,8 +332,24 @@ def build_report(cwd: Path, sig, rules: dict, records: list[dict]) -> dict:
         "over_budget": total > budget,
         "tokens": _tokens(sessions, latest_change),
         "workflow_adherence": _adherence(sessions),
+        "decisions_recorded": sum(1 for r in records if r.get("kind") == "decision"),
+        "outcomes_recorded": sum(1 for r in records if r.get("kind") == "outcome"),
         "archive_stats": archive_stats(cwd),
     }
+
+
+def _pct(rate: object) -> str:
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+        return "n/a"
+    return f"{int(round(rate * 100))}%"
+
+
+def _escalate_cell(entry: dict) -> str:
+    if entry.get("escalate_to"):
+        return str(entry["escalate_to"])
+    if entry.get("hold_reason"):
+        return f"hold: {entry['hold_reason']}"
+    return ""
 
 
 def _fmt_int(n: int) -> str:
@@ -386,7 +405,10 @@ def render_markdown(report: dict) -> str:
               f"- Episodes (session-days): {w.get('episodes', '?')}",
               f"- Episodes since last retro: {w['since_last_retro']}",
               f"- First: {w['first'] or 'n/a'}",
-              f"- Last: {w['last'] or 'n/a'}", ""]
+              f"- Last: {w['last'] or 'n/a'}"]
+    if w.get("ignored_sessions"):
+        lines.append(f"- Ignored sessions (ignore_session_prefixes): {w['ignored_sessions']}")
+    lines.append("")
 
     lines += ["## Rules", "",
               "| rule | enforcement | events | episodes | sessions | status | escalate to | before / after (events per session) |",
@@ -397,9 +419,32 @@ def render_markdown(report: dict) -> str:
         lines.append(
             f"| {e['id']} | {e['enforcement']}{' (hard)' if e['hard'] else ''} | {e['events']} | "
             f"{e.get('episodes', e['sessions'])} | {e['sessions']} | {e['status']} | "
-            f"{e.get('escalate_to') or ''} | {ba_txt} |"
+            f"{_escalate_cell(e)} | {ba_txt} |"
         )
     lines.append("")
+
+    if report.get("decisions_recorded") or report.get("outcomes_recorded"):
+        lines += ["## Decisions", "",
+                  "| rule | warned | blocked | suppressed | outcomes | proceeded | corrected | reconciled | ignored |",
+                  "|---|---|---|---|---|---|---|---|---|"]
+        for e in report["per_rule"]:
+            d = e.get("decisions") or {}
+            o = e.get("outcomes") or {}
+            if not (sum(d.values()) or o.get("n")):
+                continue
+            lines.append(
+                f"| {e['id']} | {d.get('warned', 0)} | {d.get('blocked', 0)} | {d.get('suppressed', 0)} | "
+                f"{o.get('n', 0)} | {_pct(o.get('proceeded_rate'))} | {_pct(o.get('corrected_rate'))} | "
+                f"{_pct(o.get('reconciled_rate'))} | {_pct(o.get('ignored_rate'))} |"
+            )
+        th = report["thresholds"]
+        rate = th.get("escalate_ignored_rate", 0.5)
+        lines += ["",
+                  f"A hook-warn rule climbs to hook-block only when its ignored rate reaches {_pct(rate)} "
+                  f"over at least {th['deterministic_events']} outcomes. "
+                  "ignored = the rule fired again later in the session and nothing reconciled it. "
+                  "corrected comes from the heuristic correction patterns and never gates an escalation.",
+                  ""]
 
     if report["path_clusters"]:
         lines += ["## Path clusters", "", "| pattern | rule | events | sessions |", "|---|---|---|---|"]
@@ -517,6 +562,8 @@ def merge_seed(target: Path, seed_path: Path) -> tuple[int, list[str]]:
     for key, value in (seed.get("retention") or {}).items():
         current.setdefault("retention", {}).setdefault(key, value)
     current.setdefault("correction_patterns", seed.get("correction_patterns", []))
+    if isinstance(seed.get("ignore_session_prefixes"), list):
+        current.setdefault("ignore_session_prefixes", list(seed["ignore_session_prefixes"]))
     current.setdefault("last_retro", None)
     current.setdefault("version", seed.get("version", 1))
     current["seed_version"] = int(seed.get("seed_version", 1))
@@ -540,7 +587,7 @@ def mark_retro(cwd: Path, sig, session_id: str) -> int:
         print("retro: rules.json invalid; run --validate", file=sys.stderr)
         return 2
     records = sig.load(cwd)
-    captured = sum(1 for r in records if r.get("kind") == "session")
+    captured = sum(1 for r in sig.drop_ignored(records, data) if r.get("kind") == "session")
     from datetime import datetime, timezone
     data["last_retro"] = {
         "date": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),

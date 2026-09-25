@@ -69,8 +69,8 @@ Work through the report and build a change list. Every change has exactly one of
 
 | type | when | target |
 |---|---|---|
-| `new-hook` | a rule with `status: over_threshold` and `enforcement: prose` (`escalate_to: hook-warn`) | new `.claude/hooks/<rule>-warn.py` + wiring in `.claude/settings.json`. It emits a signal only if the rule has no transcript detector, see rule 6 |
-| `edit-rule` (hook upgrade) | `enforcement: hook-warn` and over threshold (`escalate_to: hook-block`) | the existing hook: exit 1 becomes exit 2 |
+| `new-hook` | a rule with `status: over_threshold` and `enforcement: prose` (`escalate_to: hook-warn`) | new `.claude/hooks/<rule>-warn.py` + wiring in `.claude/settings.json`. It records a decision on every firing, and a violation only if the rule has no transcript detector, see rule 6 |
+| `edit-rule` (hook upgrade) | `enforcement: hook-warn`, over threshold, and the report says `escalate_to: hook-block`. A `hold:` value in that column means keep the warning, see rule 7 | the existing hook: exit 1 becomes exit 2 |
 | `edit-rule` (prose) | a rule whose wording is ambiguous AND whose evidence shows the ambiguity (for example the same path pattern in most events). Never to add emphasis, capitals, or "NOT an exemption" lists to an existing rule. | the instruction file named in `source` |
 | `add-rule` | a recurring `build_retry` program, `path_cluster`, or `new-dependency` pattern that no registry rule covers | `CLAUDE.md` / `.github/copilot-instructions.md` and a new registry entry |
 | `new-instruction-file` | a `path_cluster` with events in `>= deterministic_sessions` sessions under one directory prefix | `.github/instructions/<name>.instructions.md` with `applyTo` set to that prefix |
@@ -79,11 +79,12 @@ Work through the report and build a change list. Every change has exactly one of
 Rules that decide what survives:
 
 1. **Evidence first.** A rule listed only under `supporting_only`, or whose only signals are `user-correction`, gets no change of any type. It may appear in a "Watching" list.
-2. **Escalate, do not shout.** A prose rule that is still violated becomes a hook. If a hook already exists and is still violated, warn becomes block. Rewording an existing rule louder is never a proposal; the report shows that does not work.
+2. **Escalate, do not shout.** A prose rule that is still violated becomes a hook. If a hook already exists and its warnings are ignored, warn becomes block (rule 7). Rewording an existing rule louder is never a proposal; the report shows that does not work.
 3. **Budget.** If `over_budget` is true, every `add-rule` or `new-instruction-file` must be paired in the same proposal with a `prune-rule` or a token-reducing `edit-rule`, and the summed token delta must be zero or negative.
 4. **Self-targeting is allowed, loosening is gated.** You may propose changes to `.github/skills/coograph-retro/SKILL.md`, the detectors in `.claude/hooks/capture-signals.py`, and `correction_patterns`. You may not change `thresholds`, set a pattern or detector to disabled, or raise a threshold unless `tasks.md` carries a task whose title starts with `Loosen:` naming the field. Without it, drop the change and note it under Risks.
 5. **Numbers come from the report.** Every count, session count, date, and token figure in the proposal is copied from `report.json`. If a number is not there, it is not in the proposal.
-6. **A hook does not double-count.** A hook emits a signal through `_coograph_signals` **only when its rule has no detector in `capture-signals.py`**. `scope` and `generated-files` emit, because nothing else observes them. Every other rule — `graph-first`, `openspec-gate`, `no-new-deps`, `defect`, `user-correction` — is already recorded from the transcript, and a hook-emitted copy is counted a second time: `replace_session` keeps hook-origin records, `summarize` counts every violation equally, and `retro.py` never reads `origin`. The rule then escalates on its own warnings, and the rung after `hook-warn` is `hook-block`. The hook warns, the detector measures, and the proof the hook helped is the detector's own count falling. Say in the evidence block whether the hook emits, and why.
+6. **A hook records decisions, and a violation only when nothing else observes the rule.** Every rule hook calls `signals.emit_decision(cwd, payload, rule, action, __file__, path)` when it warns, blocks, or would have warned again in the same session (`suppressed`). Decisions are never counted as violations; `capture-signals.py` joins them to the transcript by `tool_use_id` at session end and writes one `outcome` per decision (`proceeded`, `corrected`, `reconciled`, `repeated`). A hook emits a **violation** only when its rule has no detector in `capture-signals.py`: `scope` and `generated-files`. Every other rule (`graph-first`, `openspec-gate`, `no-new-deps`, `defect`, `user-correction`) is already recorded from the transcript, and a hook-emitted violation is counted a second time: `replace_session` keeps hook-origin records, `summarize` counts every violation equally, and `retro.py` never reads `origin`. Say in the evidence block what the hook records, and why.
+7. **Warn becomes block on ignored outcomes, never on counts alone.** A `hook-warn` rule over threshold reads `escalate_to: hook-block` only when it has at least `deterministic_events` outcomes and its `ignored_rate` (the rule fired again later in the same session and nothing reconciled it) reaches `thresholds.escalate_ignored_rate`. Otherwise the report shows `hold: no_outcomes` (the hook has not run under decision records yet) or `hold: warnings_change_behaviour` (warnings are followed by reconciliation, or never repeat). A held rule is not a change; list it under Watching with its row from the Decisions table. `corrected` comes from the heuristic correction patterns and is colour, never a gate.
 
 Where the token trend is available (`tokens.before_after`), state it in the Why section. Where `workflow_adherence.rate` is below 0.5 and there are at least `deterministic_sessions` editing sessions, add an Observation (not a change) saying most editing sessions never ran a review or verify skill.
 
@@ -168,7 +169,7 @@ The rule broken most often in practice is `graph-first`. When you propose its ho
 - One hook file `.claude/hooks/graph-first-warn.py` wired twice in `.claude/settings.json` under `PreToolUse`: once with matcher `mcp__code-graph__.*`, once with matcher `Grep|Glob`.
 - On a code-graph tool call: create the marker `.coograph/graph-touched-<session_id>` and exit 0.
 - On Grep or Glob: if `.code-graph/graph.db` exists, the marker does not exist, and `.coograph/graph-warned-<session_id>` does not exist, print `[graph-first] Grep/Glob before any code-graph call this session. Call get_minimal_context or query_graph first.` to stderr, create the warned marker, exit 1. Otherwise exit 0.
-- Import `should_skip` from `_coograph_guard` like every other hook. **Do not emit a signal.** `graph-first` already has a transcript detector (`capture-signals.py`), so a hook that records its own firing counts every violation twice — see rule 6 in Step 2. This hook is measured by watching the detector's own `graph-first` count fall.
+- Import `should_skip` from `_coograph_guard` like every other hook. Record a decision through `signals.emit_decision(cwd, payload, "graph-first", "warned", __file__)` at the warning, and with `"suppressed"` when the warned marker already exists. **Do not emit a violation.** `graph-first` already has a transcript detector (`capture-signals.py`), so a hook-emitted violation counts every event twice, see rule 6 in Step 2. The hook is measured by the detector's own `graph-first` count falling and by its row in the report's Decisions table.
 - Header line: `# generated by coograph-retro on <date> from openspec/changes/<dir>`.
 
 Model the file on `.claude/hooks/warn-scope.py` (payload parsing, guard import, stderr message, exit code). Do not invent a different structure.
@@ -189,12 +190,16 @@ Run a nested session with an id you choose, so the artifacts are named with it:
 claude -p "<one tight instruction that triggers the hook>"   --allowedTools Write Bash --permission-mode acceptEdits   --session-id 11111111-aaaa-4bbb-8ccc-000000000001
 ```
 
+- Take the session id prefix from `ignore_session_prefixes` in `rules.json` (seeded
+  `11111111-aaaa-4bbb-8ccc-`) and append a fresh suffix. A session whose id starts with that
+  prefix is captured but excluded from every count, so a probe cannot escalate the rule it tests.
 - Keep the probe non-mutating: `git commit --dry-run`, `npm install --dry-run`, scratch files under
   a gitignored directory.
 - Check the hook's own artifacts (markers, `.coograph/signals.jsonl`) carry that exact session id.
 - Run the negative case too: the situation where the hook must stay silent.
-- Delete the probe files and markers afterwards, and note in the proposal that the nested session
-  is itself captured by `capture-signals.py` and will appear in the next report.
+- Delete the probe files and markers afterwards. The nested session is captured by
+  `capture-signals.py` but its records are dropped from every count and from the report's session
+  total because of the prefix; say in the proposal which id you used.
 
 Report what the probe showed. "Tests pass" is not the same claim as "the hook fired".
 

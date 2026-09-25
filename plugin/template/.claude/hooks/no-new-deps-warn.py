@@ -12,12 +12,14 @@ Two properties are deliberate:
    capture-signals.py uses. The hook cannot warn about something the detector
    would not count, or stay silent on something it would.
 
-2. This hook records nothing. `no-new-deps` already has a transcript detector,
-   and a hook-emitted copy of the same violation would be counted twice by
-   `summarize`, halving the rule's escalation threshold against itself. The
-   detector measures; this hook warns. Contrast warn-scope.py and
-   block-generated.py, whose rules have no transcript detector and therefore
-   must emit their own records.
+2. This hook records decisions, never violations. `no-new-deps` already has
+   a transcript detector, and a hook-emitted copy of the same violation would
+   be counted twice by `summarize`, halving the rule's escalation threshold
+   against itself. The detector measures the rule; the decision record
+   (warned / suppressed, with the tool_use_id) lets capture-signals.py learn
+   what followed the warning. Contrast warn-scope.py and block-generated.py,
+   whose rules have no transcript detector and therefore emit their own
+   violation as well.
 
 Never blocks - exits 1 so the warning surfaces without stopping the command, and
 at most once per session. If `.coograph/` is unwritable the marker cannot be
@@ -77,6 +79,7 @@ def main() -> int:
     sid = str(payload.get("session_id") or "unknown")
 
     subject: str | None = None
+    target = ""
     if tool in SHELL_TOOLS:
         command = str(tool_input.get("command") or "")
         if signals.dep_command(command):
@@ -85,12 +88,14 @@ def main() -> int:
         raw = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
         if raw and Path(raw).name in signals.DEP_MANIFESTS:
             subject = Path(raw).name
+            target = raw
     else:
         return 0
 
     if not subject:
         return 0
     if _marker(cwd, sid).exists():
+        _decide(cwd, payload, "suppressed", target)
         return 0
 
     print(
@@ -99,7 +104,16 @@ def main() -> int:
         file=sys.stderr,
     )
     _touch(_marker(cwd, sid))
+    _decide(cwd, payload, "warned", target)
     return 1
+
+
+def _decide(cwd: Path, payload: dict, action: str, path: str) -> None:
+    """Record the decision for Retro. Never affects the hook's own behavior."""
+    try:
+        signals.emit_decision(cwd, payload, "no-new-deps", action, __file__, path)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

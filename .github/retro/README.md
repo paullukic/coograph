@@ -12,8 +12,9 @@ Nothing here talks to a network. Everything lives in the project directory.
 `capture-signals.py` (a Claude Code `SessionEnd` hook) parses the session
 transcript Claude Code already keeps on disk and appends metadata to
 `.coograph/signals.jsonl` (gitignored). `warn-scope.py` and
-`block-generated.py` append a line each time they fire. When Retro is not
-enabled (no `rules.json`), nothing is written at all.
+`block-generated.py` append a violation each time they fire, and every rule
+hook appends a decision saying what it did about which tool call. When Retro
+is not enabled (no `rules.json`), nothing is written at all.
 
 The store logic lives in one file, `.github/retro/_coograph_signals.py`,
 shared by the hooks and the analyzer. `.claude/hooks/_coograph_signals.py`
@@ -30,7 +31,7 @@ Each line is one JSON record:
 | `ts` | when it was written |
 | `tool` | `claude-code`, `codex`, `opencode`, `unknown` |
 | `session_id` | Claude Code session id, filename-safe |
-| `kind` | `session` (one per session), `violation` (rule-bound), `event` (not rule-bound) |
+| `kind` | `session` (one per session), `violation` (rule-bound, the only kind thresholds count), `event` (not rule-bound), `decision` (a hook's action on one tool call: `warned`, `blocked` or `suppressed`, with its `tool_use_id`), `outcome` (what the transcript shows followed a decision, derived at capture and joined by `tool_use_id`) |
 | `rule` | rule id from `rules.json`, or `none` |
 | `detector` | which detector wrote it |
 | `confidence` | `deterministic` or `heuristic` |
@@ -53,13 +54,15 @@ signals file.
 | detector | rule | confidence | fires when |
 |---|---|---|---|
 | `graph-first` | `graph-first` | deterministic | a `Grep` or `Glob` call happens before the session's first graph access (a `mcp__code-graph__*` tool or a shell command containing both `sqlite3` and `.code-graph`), while `.code-graph/graph.db` exists. `proof` says what happened later: `mcp-later`, `sqlite-later`, or `total-bypass`. Subagent (sidechain) calls are ignored. |
-| `openspec-gate` | `openspec-gate` | heuristic | two or more source files edited, nothing in the session touched `openspec/changes`, and no active change directory exists at capture time |
+| `openspec-gate` | `openspec-gate` | heuristic | two or more source files edited, nothing in the session touched `openspec/changes`, and no active change directory exists at capture time. `openspec-gate-warn.py` warns live on the same conditions, once per session, at the second distinct source file; the detector stays heuristic |
 | `scope-warning` | `scope` | deterministic | `warn-scope.py` printed its warning (hook-emitted) |
 | `generated-file-block` | `generated-files` | deterministic | `block-generated.py` blocked an edit (hook-emitted) |
 | `build-retry` | none | deterministic | the same shell command ran three or more times with at least two failures |
 | `user-correction` | none | heuristic | a user message matched one of `correction_patterns` right after a tool call. Pattern id only. |
 | `new-dependency` | `no-new-deps` | deterministic | `npm install <pkg>`, `pip install <pkg>`, `uv add`, `cargo add`, `go get`, and friends; or an edit to a dependency manifest (`package.json`, `requirements.txt`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `composer.json`, `Gemfile`). Installing what a manifest already lists does not count: `pip install -r requirements.txt`, `pip install -e .`, bare `npm install`. |
 | `session` | none | deterministic | always: message count, tools used, edited-file count, skills invoked, whether the graph existed, start and end, token usage (`input`, `output`, `cache_read`, `cache_create`) summed per session, and the transcript size (`source_bytes`, used to skip unchanged transcripts without opening them) |
+| `decision` | the hook's rule | deterministic | a rule hook warned, blocked, or suppressed a repeat warning (hook-emitted through `emit_decision`; never counted as a violation) |
+| `outcome` | the decision's rule | deterministic | at capture, for each decision whose `tool_use_id` is in the transcript: `proceeded` (a tool result exists and the action was not `blocked`), `corrected` (the next user message matched a correction pattern), `reconciled` (rule-specific: `scope` a later `tasks.md` edit under `openspec/changes/`, `openspec-gate` a later touch of `openspec/changes`, `defect` a later review or verify skill, `generated-files` the path left alone afterwards; null for every other rule), `repeated` (later decisions for the same rule in the session) |
 
 Known false positives, by design:
 
@@ -87,8 +90,10 @@ the skill and the analyzer but no capture.
 `rules.json` (committed) lists the rules Retro measures, how each is
 enforced (`prose`, `hook-warn`, `hook-block`), whether it is `hard` (never
 pruned), which detector measures it, and when it was last changed. It also
-carries the thresholds, the correction patterns, retention, and
-`last_retro`.
+carries the thresholds, the correction patterns, retention,
+`ignore_session_prefixes` (a session whose id starts with one of these is
+captured but dropped from every count; seeded with the retro skill's probe
+prefix `11111111-aaaa-4bbb-8ccc-`), and `last_retro`.
 
 | threshold | default | meaning |
 |---|---|---|
@@ -98,6 +103,7 @@ carries the thresholds, the correction patterns, retention, and
 | `instruction_token_budget` | 8000 | above this, every added rule must be paired with a prune |
 | `retro_prompt_min_sessions` | 3 | sessions since the last retro before the workflow offers to run one |
 | `bootstrap_min_archives` | 10 | archived changes needed to bootstrap Retro in a project that never enabled it |
+| `escalate_ignored_rate` | 0.5 | a `hook-warn` rule over threshold reads `escalate_to: hook-block` only when this share of its outcomes were ignored (the rule fired again later, nothing reconciled it), over at least `deterministic_events` outcomes; otherwise the report says `hold: no_outcomes` or `hold: warnings_change_behaviour` |
 
 `rules.seed.json` next to it is the shipped seed: init, sync, and the
 plugin refresh it, and `rules.json` is created from it the first time.
@@ -140,11 +146,15 @@ you and asks before reading.
 ## The report
 
 `report.md` opens with a plain-language paragraph, then tables: rules
-against thresholds with an `escalate to` column, path clusters, build
-retries, tokens per session (with a before / after split around the most
-recent rule change), workflow adherence (editing sessions that also ran a
-review or verify skill), instruction file sizes against the budget, and
-archive statistics.
+against thresholds with an `escalate to` column (a rung, or `hold: <reason>`
+when a `hook-warn` rule has no outcome evidence for blocking), a Decisions
+table (per rule: warned, blocked, suppressed, outcomes, and the proceeded,
+corrected, reconciled and ignored rates), path clusters, build retries,
+tokens per session (with a before / after split around the most recent rule
+change), workflow adherence (editing sessions that also ran a review or
+verify skill), instruction file sizes against the budget, and archive
+statistics. Sessions matching `ignore_session_prefixes` are left out of all
+of it and counted once as "Ignored sessions".
 
 ## The skill
 
@@ -161,6 +171,7 @@ Rules of the skill, in one place:
 - A prose rule that is still violated is escalated to a hook, never
   reworded louder.
 - Over budget, every addition is paired with a prune.
+- Warn becomes block on ignored outcomes, never on counts alone.
 - Retro may target its own skill, detectors, and hooks, but may not change
   thresholds or disable a detector without a task titled `Loosen:`.
 - Every generated hook file carries a provenance header; every retro
@@ -181,19 +192,29 @@ whatever `enforcement` it already recorded until its next retro flips it. Expect
 hooks to fire while the registry still reads `prose`; the signals are recorded either
 way and the next report reconciles it.
 
+`openspec-gate` ships as `hook-warn` since the decision-records change, enforced by
+`openspec-gate-warn.py`, and the same lag applies. That change also added
+`thresholds.escalate_ignored_rate` and `ignore_session_prefixes`; `retro.py --merge-seed`
+adds both to an existing registry without touching any value already there. Until the
+hooks have run under that version, every `hook-warn` rule over threshold reads
+`hold: no_outcomes`: the block rung now needs outcome evidence, and old records carry none.
+
 ## Writing a hook for a rule
 
 Three things bite in order, and the first two are silent.
 
-**1. Emit only if nothing else observes the rule.** A hook records a signal through
-`_coograph_signals` only when its rule has **no detector in `capture-signals.py`**. Today that is
-`scope` and `generated-files`, and only those. `graph-first`, `openspec-gate`, `no-new-deps`,
-`defect` and `user-correction` are recorded from the transcript already; a hook that records them
-too is counted twice, because `replace_session` keeps hook-origin records, `summarize` counts every
-violation equally, and `retro.py` never reads `origin`. The rule then crosses its threshold on the
-hook's own warnings, and the rung after `hook-warn` is `hook-block`. The hook warns, the detector
-measures, and the hook worked if the detector's count falls.
-`tests/test_capture.py::HookEmissionRulesTests` enforces this.
+**1. Record a decision always; a violation only if nothing else observes the rule.** Every rule
+hook calls `signals.emit_decision(cwd, payload, rule, action, __file__, path)` where it warns
+(`warned`), blocks (`blocked`), or would have warned again in the same session (`suppressed`).
+That record is never counted as a violation; at session end `capture-signals.py` joins it to the
+transcript by `tool_use_id` and writes an `outcome`, which is what lets the next retro tell a
+warning that changed behaviour from one that was ignored. A hook emits a **violation** only when
+its rule has **no detector in `capture-signals.py`**. Today that is `scope` and `generated-files`,
+and only those. `graph-first`, `openspec-gate`, `no-new-deps`, `defect` and `user-correction` are
+recorded from the transcript already; a hook-emitted violation is counted twice, because
+`replace_session` keeps hook-origin records, `summarize` counts every violation equally, and
+`retro.py` never reads `origin`. `tests/test_capture.py::HookEmissionRulesTests` and
+`HookDecisionRulesTests` enforce both halves.
 
 **2. Unknown evidence keys vanish without an error.** `ALLOWED_EVIDENCE` is a per-detector
 allow-list and `make_record` filters against it silently. Emit a key the detector does not declare
@@ -210,5 +231,6 @@ claude -p "<one instruction that triggers the hook>" --allowedTools Write Bash  
 ```
 
 The markers and records the hook writes then carry that id. Run the negative case too, keep the
-probe non-mutating (`--dry-run`), delete the artifacts afterwards, and remember the nested session
-is itself captured and will show up in the next report.
+probe non-mutating (`--dry-run`), and delete the artifacts afterwards. The nested session is
+captured, but an id that starts with a prefix in `ignore_session_prefixes` is dropped from every
+count, so the probe cannot escalate the rule it tests.

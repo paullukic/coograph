@@ -26,6 +26,16 @@ def _run_retro(root: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+_DETECTOR = {"graph-first": "graph-first", "openspec-gate": "openspec-gate",
+             "scope": "scope-warning", "no-new-deps": "new-dependency"}
+_EVIDENCE = {
+    "graph-first": {"count": 1, "first_index": 0, "tools": ["Grep"], "proof": "mcp-later"},
+    "openspec-gate": {"files": ["src/api/a.ts", "src/api/b.ts"], "count": 2},
+    "scope": {"path": "src/api/x.ts", "openspec": "s"},
+    "no-new-deps": {"program": "npm", "manifest": "", "via": "command"},
+}
+
+
 def _session(root: Path, sid: str, started: str, *, edits: int = 0, review: bool = False,
              usage_total: int = 0, violations: int = 0, rule: str = "graph-first") -> None:
     """Write one synthetic session straight into the store."""
@@ -33,12 +43,9 @@ def _session(root: Path, sid: str, started: str, *, edits: int = 0, review: bool
     for _ in range(violations):
         recs.append(sig.make_record(
             tool="claude-code", session_id=sid, kind="violation", rule=rule,
-            detector={"graph-first": "graph-first", "openspec-gate": "openspec-gate",
-                      "scope": "scope-warning"}[rule],
+            detector=_DETECTOR[rule],
             confidence="heuristic" if rule == "openspec-gate" else "deterministic",
-            evidence={"count": 1, "first_index": 0, "tools": ["Grep"], "proof": "mcp-later"}
-            if rule == "graph-first" else ({"files": ["src/api/a.ts", "src/api/b.ts"], "count": 2}
-                                           if rule == "openspec-gate" else {"path": "src/api/x.ts", "openspec": "s"}),
+            evidence=_EVIDENCE[rule],
             origin="transcript", ts=started,
         ))
     recs.append(sig.make_record(
@@ -52,6 +59,24 @@ def _session(root: Path, sid: str, started: str, *, edits: int = 0, review: bool
         },
     ))
     sig.replace_session(root, sid, recs)
+
+
+def _outcomes(root: Path, sid: str, rule: str, *, repeated: list[int], reconciled: object = None) -> None:
+    """One warned decision plus its outcome per entry in `repeated`. Call after _session:
+    replace_session drops transcript-origin records, and outcomes are transcript-origin."""
+    for i, count in enumerate(repeated):
+        tid = f"{sid}-t{i}"
+        sig.emit(root, sig.make_record(
+            tool="claude-code", session_id=sid, kind="decision", rule=rule, detector="decision",
+            confidence="deterministic", origin="hook",
+            evidence={"action": "warned", "tool_use_id": tid, "hook": "x-warn.py", "path": ""},
+        ))
+        sig.emit(root, sig.make_record(
+            tool="claude-code", session_id=sid, kind="outcome", rule=rule, detector="outcome",
+            confidence="deterministic", origin="transcript",
+            evidence={"tool_use_id": tid, "action": "warned", "proceeded": True,
+                      "corrected": False, "reconciled": reconciled, "repeated": count},
+        ))
 
 
 class RegistryTests(unittest.TestCase):
@@ -120,6 +145,37 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("not valid JSON", proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
+
+    def test_validate_rejects_bad_prefixes_and_rate(self) -> None:
+        root = make_project(Path(self.tmp.name) / "v")
+        path = root / ".github" / "retro" / "rules.json"
+        data = json.loads(path.read_text())
+        data["ignore_session_prefixes"] = "x"
+        path.write_text(json.dumps(data))
+        proc = _run_retro(root, "--validate")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("ignore_session_prefixes", proc.stderr)
+        data["ignore_session_prefixes"] = ["p-"]
+        data["thresholds"]["escalate_ignored_rate"] = 2
+        path.write_text(json.dumps(data))
+        proc = _run_retro(root, "--validate")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("thresholds.escalate_ignored_rate", proc.stderr)
+
+    def test_merge_seed_adds_prefixes_and_rate_without_touching_values(self) -> None:
+        root = make_project(Path(self.tmp.name) / "m")
+        path = root / ".github" / "retro" / "rules.json"
+        data = json.loads(path.read_text())
+        data.pop("ignore_session_prefixes")
+        data["thresholds"].pop("escalate_ignored_rate")
+        data["thresholds"]["deterministic_events"] = 7
+        path.write_text(json.dumps(data))
+        proc = _run_retro(root, "--merge-seed")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        merged = json.loads(path.read_text())
+        self.assertEqual(merged["ignore_session_prefixes"], ["11111111-aaaa-4bbb-8ccc-"])
+        self.assertEqual(merged["thresholds"]["escalate_ignored_rate"], 0.5)
+        self.assertEqual(merged["thresholds"]["deterministic_events"], 7)
 
     def test_mark_retro(self) -> None:
         for i in range(3):
@@ -253,6 +309,77 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report["workflow_adherence"], {"editing_sessions": 4, "reviewed_sessions": 3, "rate": 0.75})
         gf = next(e for e in report["per_rule"] if e["id"] == "graph-first")
         self.assertIsNotNone(gf["before_after"])
+
+    def _rule(self, report: dict, rid: str) -> dict:
+        return next(e for e in report["per_rule"] if e["id"] == rid)
+
+    def test_hook_warn_holds_without_outcomes(self) -> None:
+        for i in range(3):
+            _session(self.root, f"n{i}", f"2026-09-0{i + 1}", violations=1, rule="no-new-deps")
+        report, md = self._report()
+        nd = self._rule(report, "no-new-deps")
+        self.assertEqual(nd["enforcement"], "hook-warn")
+        self.assertEqual(nd["status"], "over_threshold")
+        self.assertIsNone(nd["escalate_to"])
+        self.assertEqual(nd["hold_reason"], "no_outcomes")
+        self.assertIn("| hold: no_outcomes |", md)
+        self.assertNotIn("## Decisions", md)
+
+    def test_hook_warn_holds_when_warnings_change_behaviour(self) -> None:
+        for i in range(3):
+            _session(self.root, f"n{i}", f"2026-09-0{i + 1}", violations=1, rule="no-new-deps")
+            _outcomes(self.root, f"n{i}", "no-new-deps", repeated=[0])
+        report, md = self._report()
+        nd = self._rule(report, "no-new-deps")
+        self.assertEqual(nd["status"], "over_threshold")
+        self.assertIsNone(nd["escalate_to"])
+        self.assertEqual(nd["hold_reason"], "warnings_change_behaviour")
+        self.assertEqual(nd["decisions"], {"warned": 3, "blocked": 0, "suppressed": 0})
+        self.assertEqual(nd["outcomes"]["n"], 3)
+        self.assertEqual(nd["outcomes"]["ignored_rate"], 0.0)
+        self.assertEqual(report["decisions_recorded"], 3)
+        self.assertIn("## Decisions", md)
+        self.assertIn("| no-new-deps | 3 | 0 | 0 | 3 | 100% | 0% | n/a | 0% |", md)
+
+    def test_hook_warn_escalates_when_warnings_are_ignored(self) -> None:
+        for i in range(3):
+            _session(self.root, f"n{i}", f"2026-09-0{i + 1}", violations=1, rule="no-new-deps")
+            _outcomes(self.root, f"n{i}", "no-new-deps", repeated=[1, 0])
+        report, md = self._report()
+        nd = self._rule(report, "no-new-deps")
+        self.assertEqual(nd["escalate_to"], "hook-block")
+        self.assertNotIn("hold_reason", nd)
+        self.assertEqual(nd["outcomes"]["ignored_rate"], 0.5)
+        self.assertIn("| hook-block |", md)
+
+    def test_reconciled_outcomes_are_not_ignored(self) -> None:
+        for i in range(3):
+            _session(self.root, f"n{i}", f"2026-09-0{i + 1}", violations=1, rule="no-new-deps")
+            _outcomes(self.root, f"n{i}", "no-new-deps", repeated=[2], reconciled=True)
+        report, _ = self._report()
+        nd = self._rule(report, "no-new-deps")
+        self.assertEqual(nd["hold_reason"], "warnings_change_behaviour")
+        self.assertEqual(nd["outcomes"]["reconciled_rate"], 1.0)
+        self.assertEqual(nd["outcomes"]["ignored_rate"], 0.0)
+
+    def test_prose_rule_still_escalates_to_warn_without_outcomes(self) -> None:
+        for i in range(3):
+            _session(self.root, f"s{i}", f"2026-09-0{i + 1}", violations=1)
+        report, _ = self._report()
+        self.assertEqual(self._rule(report, "graph-first")["escalate_to"], "hook-warn")
+
+    def test_ignored_prefixes_drop_probe_sessions(self) -> None:
+        _session(self.root, "11111111-aaaa-4bbb-8ccc-000000000005", "2026-09-05", violations=1, rule="no-new-deps")
+        _session(self.root, "abc", "2026-09-06", violations=1, rule="no-new-deps")
+        report, md = self._report()
+        self.assertEqual(report["window"]["sessions"], 1)
+        self.assertEqual(report["window"]["ignored_sessions"], 1)
+        self.assertEqual(self._rule(report, "no-new-deps")["events"], 1)
+        self.assertIn("Ignored sessions (ignore_session_prefixes): 1", md)
+        status = _run_retro(self.root, "--status")
+        self.assertIn("1 episodes since last retro", status.stdout)
+        mark = _run_retro(self.root, "--mark-retro", "abc")
+        self.assertIn("(1 sessions captured)", mark.stdout)
 
     def test_archive_stats(self) -> None:
         report, md = self._report()

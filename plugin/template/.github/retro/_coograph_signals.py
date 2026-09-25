@@ -17,9 +17,18 @@ through a per-detector evidence allow-list, and tested with a sentinel
 transcript in .github/retro/tests/.
 
 Writers:
-  - .claude/hooks/capture-signals.py   (transcript-derived records, origin "transcript")
-  - .claude/hooks/warn-scope.py        (origin "hook")
-  - .claude/hooks/block-generated.py   (origin "hook")
+  - .claude/hooks/capture-signals.py   (transcript-derived records, origin "transcript",
+                                        including one "outcome" per hook decision)
+  - .claude/hooks/warn-scope.py        (origin "hook": a "scope" violation and a decision)
+  - .claude/hooks/block-generated.py   (origin "hook": a "generated-files" violation and a decision)
+  - .claude/hooks/no-new-deps-warn.py  (origin "hook": decisions only)
+  - .claude/hooks/defect-warn.py       (origin "hook": decisions only)
+  - .claude/hooks/openspec-gate-warn.py (origin "hook": decisions only)
+
+Record kinds: "session" (one per session), "violation" (rule-bound, the only
+kind thresholds count), "event" (not rule-bound), "decision" (what a hook did
+about one tool call), "outcome" (what the transcript shows happened after that
+decision, joined by tool_use_id).
 
 Readers:
   - .github/retro/retro.py             (analyzer, report, status)
@@ -53,7 +62,8 @@ PATH_MAX_CHARS = 300
 DEFAULT_MAX_SESSIONS = 500
 
 TOOLS = {"claude-code", "codex", "opencode", "unknown"}
-KINDS = {"session", "violation", "event"}
+KINDS = {"session", "violation", "event", "decision", "outcome"}
+DECISION_ACTIONS = {"warned", "blocked", "suppressed"}
 ORIGINS = {"transcript", "hook"}
 CONFIDENCES = {"deterministic", "heuristic"}
 ENFORCEMENTS = {"prose", "hook-warn", "hook-block"}
@@ -121,6 +131,8 @@ ALLOWED_EVIDENCE: dict[str, set[str]] = {
     "user-correction": {"pattern", "after_tool"},
     "defect": {"fix", "origin", "files", "count", "days"},
     "new-dependency": {"program", "manifest", "via"},
+    "decision": {"action", "tool_use_id", "hook", "path"},
+    "outcome": {"tool_use_id", "action", "proceeded", "corrected", "reconciled", "repeated"},
     "session": {
         "message_count", "tools_used", "tool_calls_total", "edited_files",
         "skills_invoked", "graph_db_present", "started", "ended", "usage",
@@ -135,6 +147,11 @@ REQUIRED_THRESHOLDS = {
     "bootstrap_min_archives",
 }
 DEFAULT_BOOTSTRAP_MIN_ARCHIVES = 10
+# A hook-warn rule climbs to hook-block only when this share of its outcomes
+# were ignored (the rule fired again later and nothing reconciled it).
+DEFAULT_ESCALATE_IGNORED_RATE = 0.5
+HOLD_NO_OUTCOMES = "no_outcomes"
+HOLD_WARNINGS_WORK = "warnings_change_behaviour"
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
 _WIN_ABS_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
@@ -273,6 +290,11 @@ def validate_rules(data: object) -> str | None:
         value = thresholds.get(key)
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             return f"thresholds.{key}"
+    rate = thresholds.get("escalate_ignored_rate")
+    if rate is not None and (
+        isinstance(rate, bool) or not isinstance(rate, (int, float)) or not 0 <= rate <= 1
+    ):
+        return "thresholds.escalate_ignored_rate"
     patterns = data.get("correction_patterns")
     if not isinstance(patterns, list):
         return "correction_patterns"
@@ -293,6 +315,10 @@ def validate_rules(data: object) -> str | None:
     max_sessions = retention.get("max_sessions")
     if not isinstance(max_sessions, int) or isinstance(max_sessions, bool) or max_sessions < 1:
         return "retention.max_sessions"
+    prefixes = data.get("ignore_session_prefixes")
+    if prefixes is not None:
+        if not isinstance(prefixes, list) or any(not isinstance(p, str) or not p for p in prefixes):
+            return "ignore_session_prefixes"
     last = data.get("last_retro")
     if last is not None:
         if not isinstance(last, dict) or not isinstance(last.get("date"), str):
@@ -317,6 +343,48 @@ def load_rules(cwd: Path) -> dict | None:
 # ---------------------------------------------------------------------------
 # Lock
 # ---------------------------------------------------------------------------
+
+def active_openspec_exists(cwd: Path) -> bool:
+    """A change directory other than archive/ exists under openspec/changes/.
+
+    Shared by the openspec-gate detector and openspec-gate-warn.py so the hook
+    cannot disagree with the detector about what "an active change" means.
+    """
+    changes = Path(cwd) / "openspec" / "changes"
+    try:
+        return any(p.is_dir() and p.name != "archive" for p in changes.iterdir())
+    except OSError:
+        return False
+
+
+def ignore_prefixes(rules: dict | None) -> tuple[str, ...]:
+    raw = (rules or {}).get("ignore_session_prefixes")
+    if not isinstance(raw, list):
+        return ()
+    return tuple(p for p in raw if isinstance(p, str) and p)
+
+
+def ignored_session(session_id: object, rules: dict | None) -> bool:
+    """True for sessions the registry says to leave out of every count.
+
+    Verification probes started by the retro skill are real captured sessions
+    whose only purpose is to trip a hook; counted, they escalate the rule they
+    test.
+    """
+    sid = str(session_id or "")
+    return any(sid.startswith(p) for p in ignore_prefixes(rules))
+
+
+def drop_ignored(records: list[dict], rules: dict | None) -> list[dict]:
+    return [r for r in records if not ignored_session(r.get("session_id"), rules)]
+
+
+def escalate_ignored_rate(rules: dict | None) -> float:
+    raw = ((rules or {}).get("thresholds") or {}).get("escalate_ignored_rate")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return DEFAULT_ESCALATE_IGNORED_RATE
+    return float(raw)
+
 
 class _Lock:
     """Cross-process lock via O_CREAT|O_EXCL. Same shape as _coograph_guard."""
@@ -422,6 +490,38 @@ def emit(cwd: Path, record: dict | None) -> bool:
                 fh.write(json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n")
         return True
     except OSError:
+        return False
+
+
+def emit_decision(cwd: Path, payload: dict, rule: str, action: str, hook: str,
+                  path: str = "") -> bool:
+    """Record what a hook decided about one tool call. Never raises.
+
+    Every rule hook calls this at the moment it warns, blocks, or would have
+    warned again in the same session ("suppressed"). The record is joined to
+    the transcript by tool_use_id at capture time to learn what followed. It
+    is never counted as a violation; thresholds read kind == "violation" only.
+    """
+    if action not in DECISION_ACTIONS:
+        return False
+    try:
+        record = make_record(
+            tool="claude-code",
+            session_id=str(payload.get("session_id") or "unknown"),
+            kind="decision",
+            rule=rule,
+            detector="decision",
+            confidence="deterministic",
+            origin="hook",
+            evidence={
+                "action": action,
+                "tool_use_id": str(payload.get("tool_use_id") or "")[:64],
+                "hook": Path(hook).name[:60],
+                "path": rel_path(cwd, path) if path else "",
+            },
+        )
+        return emit(Path(cwd), record)
+    except Exception:
         return False
 
 
@@ -557,9 +657,44 @@ def sessions_since(sessions: dict[str, dict], last_retro: dict | None) -> int:
     return sum(1 for rec in sessions.values() if _started_of(rec) > anchor)
 
 
+def _count(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def outcome_rates(outcomes: list[dict]) -> dict:
+    """Rates over one rule's outcome records. All None when there are none.
+
+    ignored: the rule fired again later in the session and nothing reconciled
+    it. Built from deterministic fields only; corrected (heuristic patterns)
+    is reported but never gates an escalation.
+    """
+    n = len(outcomes)
+    if n == 0:
+        return {"n": 0, "proceeded_rate": None, "corrected_rate": None,
+                "reconciled_rate": None, "ignored_rate": None}
+    evs = [o.get("evidence") or {} for o in outcomes]
+    proceeded = sum(1 for e in evs if e.get("proceeded") is True)
+    corrected = sum(1 for e in evs if e.get("corrected") is True)
+    applicable = [e for e in evs if e.get("reconciled") is not None]
+    reconciled = sum(1 for e in applicable if e.get("reconciled") is True)
+    ignored = sum(1 for e in evs if _count(e.get("repeated")) > 0 and e.get("reconciled") is not True)
+    return {
+        "n": n,
+        "proceeded_rate": round(proceeded / n, 2),
+        "corrected_rate": round(corrected / n, 2),
+        "reconciled_rate": round(reconciled / len(applicable), 2) if applicable else None,
+        "ignored_rate": round(ignored / n, 2),
+    }
+
+
 def summarize(records: list[dict], rules: dict) -> dict:
-    """Per-rule counts against thresholds. Pure; no I/O."""
+    """Per-rule counts against thresholds. Pure; no I/O.
+
+    Sessions matching ignore_session_prefixes are dropped first. Decisions and
+    outcomes are summarised per rule but never counted as violations.
+    """
     thresholds = rules["thresholds"]
+    records = drop_ignored(records, rules)
     sessions = {
         str(r["session_id"]): r for r in records if r.get("kind") == "session"
     }
@@ -584,6 +719,13 @@ def summarize(records: list[dict], rules: dict) -> dict:
         det_events = len(det_hits)
         det_sessions = len({r.get("session_id") for r in det_hits})
         det_episodes = len({episode_key(r) for r in det_hits})
+        decisions = [r for r in records if r.get("kind") == "decision" and r.get("rule") == rid]
+        outcomes = [r for r in records if r.get("kind") == "outcome" and r.get("rule") == rid]
+        decision_counts = {
+            action: sum(1 for d in decisions if (d.get("evidence") or {}).get("action") == action)
+            for action in ("warned", "blocked", "suppressed")
+        }
+        rates = outcome_rates(outcomes)
 
         if rule.get("detector") is None:
             status = "no_detector"
@@ -616,13 +758,26 @@ def summarize(records: list[dict], rules: dict) -> dict:
             "episodes": rule_episodes,
             "confidence": confidence,
             "status": status,
+            "decisions": decision_counts,
+            "outcomes": rates,
         }
         if status == "over_threshold":
-            entry["escalate_to"] = {
+            rung = {
                 "prose": "hook-warn",
                 "hook-warn": "hook-block",
                 "hook-block": None,
             }[rule["enforcement"]]
+            # Warn becomes block on evidence that warning changed nothing, not
+            # on the count alone. The count is what the hook's own presence
+            # inflates; the ignored rate is what only a failing hook produces.
+            if rung == "hook-block":
+                if rates["n"] < thresholds["deterministic_events"]:
+                    rung = None
+                    entry["hold_reason"] = HOLD_NO_OUTCOMES
+                elif rates["ignored_rate"] < escalate_ignored_rate(rules):
+                    rung = None
+                    entry["hold_reason"] = HOLD_WARNINGS_WORK
+            entry["escalate_to"] = rung
             over.append(entry)
         per_rule.append(entry)
 
