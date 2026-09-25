@@ -42,7 +42,7 @@
       "detector": "scope-warning",
       "added": "2026-09-19",
       "last_triggered": null,
-      "last_changed": null
+      "last_changed": "2026-09-25"
     },
     {
       "id": "generated-files",
@@ -62,15 +62,15 @@
       "id": "no-new-deps",
       "title": "No new dependencies without explicit user approval",
       "source": {
-        "file": "CLAUDE.md",
-        "anchor": "Critical Rules"
+        "file": ".claude/hooks/no-new-deps-warn.py",
+        "anchor": "no-new-deps-warn"
       },
-      "enforcement": "prose",
+      "enforcement": "hook-warn",
       "hard": false,
       "detector": "new-dependency",
       "added": "2026-09-19",
       "last_triggered": null,
-      "last_changed": null
+      "last_changed": "2026-09-25"
     },
     {
       "id": "preserve-features",
@@ -104,15 +104,15 @@
       "id": "defect",
       "title": "A fix commit landing on a file a recent change touched: the guardrails missed a defect",
       "source": {
-        "file": ".github/copilot-instructions.md",
-        "anchor": "Workflow"
+        "file": ".claude/hooks/defect-warn.py",
+        "anchor": "defect-warn"
       },
-      "enforcement": "prose",
+      "enforcement": "hook-warn",
       "hard": false,
       "detector": "defect",
       "added": "2026-09-20",
       "last_triggered": null,
-      "last_changed": null
+      "last_changed": "2026-09-25"
     }
   ],
   "thresholds": {
@@ -161,5 +161,9 @@
   "retention": {
     "max_sessions": 500
   },
-  "last_retro": null
+  "last_retro": {
+    "date": "2026-09-25T09:01:37Z",
+    "session_id": "0716f0ec-746c-4a09-b5de-df3767b44273",
+    "captured_sessions": 9
+  }
 }

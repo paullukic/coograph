@@ -584,6 +584,22 @@ class HookModeTests(unittest.TestCase):
         self.assertEqual(recs[0]["evidence"]["path"], "src/b.ts")
         self.assertEqual(recs[0]["evidence"]["openspec"], "2026-09-01-active")
 
+    def test_warn_scope_scope_set_keeps_dotfile_directories(self) -> None:
+        root = make_project(self.base / "dotted", active_openspec=True)
+        tasks = root / "openspec" / "changes" / "2026-09-01-active" / "tasks.md"
+        tasks.write_text(
+            "- [ ] edit `.claude/settings.json`, `./src/a.ts` and `../outside.ts`\n",
+            encoding="utf-8",
+        )
+        spec = importlib.util.spec_from_file_location(
+            "warn_scope_under_test", root / ".claude" / "hooks" / "warn-scope.py")
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        slug, scope = hook._active_openspec(root)
+        self.assertEqual(slug, "2026-09-01-active")
+        # Old code produced {"claude/settings.json", "src/a.ts", "outside.ts"}.
+        self.assertEqual(scope, {".claude/settings.json", "src/a.ts", "../outside.ts"})
+
     def test_block_generated_emits(self) -> None:
         proc = self._run("block-generated.py", {
             "hook_event_name": "PreToolUse", "tool_name": "Write", "session_id": "bg1",
