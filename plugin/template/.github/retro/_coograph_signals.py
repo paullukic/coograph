@@ -45,6 +45,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -58,6 +59,17 @@ RULES_REL = Path(".github") / "retro" / "rules.json"
 LOCK_WAIT_SECONDS = 2.0
 LOCK_STALE_SECONDS = 60
 LOCK_POLL_SECONDS = 0.05
+# Windows refuses a rename or a delete while another process (Defender, the
+# search indexer) holds the file. The refusal is transient; a bounded retry is
+# the difference between a lost session and a 25 ms delay. POSIX never refuses,
+# so the loops exit on the first attempt there.
+REPLACE_RETRIES = 20
+REPLACE_RETRY_SECONDS = 0.025
+UNLINK_RETRIES = 20
+UNLINK_RETRY_SECONDS = 0.025
+# An empty lock file is a released one (see _Lock); this grace only covers the
+# microseconds between creating the file and writing the owner's pid into it.
+LOCK_EMPTY_BREAK_SECONDS = 0.25
 PATH_MAX_CHARS = 300
 DEFAULT_MAX_SESSIONS = 500
 
@@ -386,8 +398,22 @@ def escalate_ignored_rate(rules: dict | None) -> float:
     return float(raw)
 
 
+def _os_replace(src: Path, dst: Path) -> None:
+    os.replace(src, dst)
+
+
+def _unlink(path: Path) -> None:
+    path.unlink()
+
+
 class _Lock:
-    """Cross-process lock via O_CREAT|O_EXCL. Same shape as _coograph_guard."""
+    """Cross-process lock via O_CREAT|O_EXCL. Same shape as _coograph_guard.
+
+    The lock file holds the owner's pid while held. A release that cannot
+    delete the file (Windows sharing violation) truncates it to empty instead,
+    and an empty lock is breakable after LOCK_EMPTY_BREAK_SECONDS; a non-empty
+    one, left by a crashed process, only after LOCK_STALE_SECONDS.
+    """
 
     def __init__(self, cwd: Path) -> None:
         self.path = Path(cwd) / LOCK_REL
@@ -399,27 +425,51 @@ class _Lock:
         while True:
             try:
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.close(fd)
+                try:
+                    os.write(fd, str(os.getpid()).encode("ascii"))
+                finally:
+                    os.close(fd)
                 self.held = True
                 return self
             except FileExistsError:
-                try:
-                    if time.time() - self.path.stat().st_mtime > LOCK_STALE_SECONDS:
-                        self.path.unlink()
+                if self._breakable():
+                    try:
+                        _unlink(self.path)
                         continue
-                except OSError:
-                    pass
+                    except OSError:
+                        pass
                 if time.monotonic() >= deadline:
                     return self
                 time.sleep(LOCK_POLL_SECONDS)
 
+    def _breakable(self) -> bool:
+        try:
+            st = self.path.stat()
+        except OSError:
+            return False
+        age = time.time() - st.st_mtime
+        if age > LOCK_STALE_SECONDS:
+            return True
+        return st.st_size == 0 and age > LOCK_EMPTY_BREAK_SECONDS
+
     def __exit__(self, *exc: object) -> None:
-        if self.held:
+        if not self.held:
+            return
+        self.held = False
+        for _ in range(UNLINK_RETRIES):
             try:
-                self.path.unlink()
+                _unlink(self.path)
+                return
+            except FileNotFoundError:
+                return
             except OSError:
+                time.sleep(UNLINK_RETRY_SECONDS)
+        # Released but not deletable: mark it so waiters break it soon.
+        try:
+            with self.path.open("w", encoding="utf-8"):
                 pass
-            self.held = False
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -569,14 +619,32 @@ def replace_session(
                 merged = [r for r in merged if r.get("session_id") not in drop]
 
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".jsonl.tmp")
-            with tmp.open("w", encoding="utf-8") as fh:
-                for rec in merged:
-                    fh.write(json.dumps(rec, ensure_ascii=True, separators=(",", ":")) + "\n")
-            os.replace(tmp, path)
+            tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+            try:
+                with tmp.open("w", encoding="utf-8") as fh:
+                    for rec in merged:
+                        fh.write(json.dumps(rec, ensure_ascii=True, separators=(",", ":")) + "\n")
+                if not _replace_with_retry(tmp, path):
+                    return False
+            finally:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
         return True
     except OSError:
         return False
+
+
+def _replace_with_retry(tmp: Path, path: Path) -> bool:
+    for attempt in range(REPLACE_RETRIES):
+        try:
+            _os_replace(tmp, path)
+            return True
+        except OSError:
+            if attempt + 1 < REPLACE_RETRIES:
+                time.sleep(REPLACE_RETRY_SECONDS)
+    return False
 
 
 # ---------------------------------------------------------------------------

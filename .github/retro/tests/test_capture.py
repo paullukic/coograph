@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -99,21 +100,154 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(len(recs), 2)
         self.assertEqual({r["origin"] for r in recs}, {"hook", "transcript"})
 
+    def _session_rec(self, sid: str) -> dict:
+        return sig.make_record(tool="claude-code", session_id=sid, kind="session", rule="none",
+                               detector="session", confidence="deterministic",
+                               evidence={"message_count": 1, "started": f"2026-09-0{sid[-1]}"},
+                               origin="transcript")
+
+    def _lock_path(self) -> Path:
+        return self.root / sig.LOCK_REL
+
+    def _tmp_files(self) -> list[Path]:
+        return sorted((self.root / ".coograph").glob("*.tmp"))
+
     def test_concurrent_writers(self) -> None:
+        results: dict[str, bool] = {}
+
         def writer(sid: str) -> None:
-            rec = sig.make_record(tool="claude-code", session_id=sid, kind="session", rule="none",
-                                  detector="session", confidence="deterministic",
-                                  evidence={"message_count": 1, "started": f"2026-09-0{sid[-1]}"},
-                                  origin="transcript")
-            sig.replace_session(self.root, sid, [rec])
+            results[sid] = sig.replace_session(self.root, sid, [self._session_rec(sid)])
 
         threads = [threading.Thread(target=writer, args=(f"s{i}",)) for i in range(1, 6)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
+        # First the return values, so a failure names the writer and the store,
+        # not a set difference the reader has to reverse-engineer.
+        self.assertEqual(results, {f"s{i}": True for i in range(1, 6)})
         recs = read_signals(self.root)
         self.assertEqual({r["session_id"] for r in recs}, {"s1", "s2", "s3", "s4", "s5"})
+        self.assertEqual(self._tmp_files(), [])
+        self.assertFalse(self._lock_path().exists())
+
+    def test_replace_refused_twice_then_lands(self) -> None:
+        calls: list[Path] = []
+        real = sig._os_replace
+
+        def flaky(src: Path, dst: Path) -> None:
+            calls.append(src)
+            if len(calls) <= 2:
+                raise PermissionError(5, "sharing violation")
+            real(src, dst)
+
+        sig._os_replace = flaky
+        try:
+            self.assertTrue(sig.replace_session(self.root, "r1", [self._session_rec("r1")]))
+        finally:
+            sig._os_replace = real
+        self.assertEqual(len(calls), 3)
+        self.assertEqual([r["session_id"] for r in read_signals(self.root)], ["r1"])
+        self.assertEqual(self._tmp_files(), [])
+
+    def test_replace_refused_forever_fails_closed(self) -> None:
+        sig.replace_session(self.root, "r0", [self._session_rec("r0")])
+        before = read_signals(self.root)
+        real_replace, real_sleep = sig._os_replace, sig.REPLACE_RETRY_SECONDS
+        calls = 0
+
+        def refuse(src: Path, dst: Path) -> None:
+            nonlocal calls
+            calls += 1
+            raise PermissionError(32, "sharing violation")
+
+        sig._os_replace, sig.REPLACE_RETRY_SECONDS = refuse, 0
+        try:
+            self.assertFalse(sig.replace_session(self.root, "r2", [self._session_rec("r2")]))
+        finally:
+            sig._os_replace, sig.REPLACE_RETRY_SECONDS = real_replace, real_sleep
+        self.assertEqual(calls, sig.REPLACE_RETRIES)
+        self.assertEqual(read_signals(self.root), before)
+        self.assertEqual(self._tmp_files(), [])
+        self.assertFalse(self._lock_path().exists())
+
+    def test_unreleasable_lock_does_not_block_for_a_minute(self) -> None:
+        lock = self._lock_path()
+        real_unlink, real_sleep = sig._unlink, sig.UNLINK_RETRY_SECONDS
+        refusals = 0
+
+        def sticky(path: Path) -> None:
+            nonlocal refusals
+            if path == lock and refusals <= sig.UNLINK_RETRIES:
+                refusals += 1
+                raise PermissionError(32, "sharing violation")
+            real_unlink(path)
+
+        sig._unlink, sig.UNLINK_RETRY_SECONDS = sticky, 0
+        started = time.monotonic()
+        try:
+            self.assertTrue(sig.emit(self.root, self._session_rec("a")))
+            self.assertTrue(lock.exists())
+            self.assertEqual(lock.read_text(encoding="utf-8"), "")
+            self.assertTrue(sig.emit(self.root, self._session_rec("b")))
+        finally:
+            sig._unlink, sig.UNLINK_RETRY_SECONDS = real_unlink, real_sleep
+        self.assertLess(time.monotonic() - started, 2.0)
+        self.assertEqual({r["session_id"] for r in read_signals(self.root)}, {"a", "b"})
+        self.assertFalse(lock.exists())
+
+    def test_crashed_writer_lock_is_respected(self) -> None:
+        lock = self._lock_path()
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text("12345", encoding="utf-8")
+        old = time.time() - 5
+        os.utime(lock, (old, old))
+        real_wait = sig.LOCK_WAIT_SECONDS
+        sig.LOCK_WAIT_SECONDS = 0.2
+        try:
+            self.assertFalse(sig.emit(self.root, self._session_rec("c")))
+        finally:
+            sig.LOCK_WAIT_SECONDS = real_wait
+        self.assertEqual(lock.read_text(encoding="utf-8"), "12345")
+        self.assertEqual(read_signals(self.root), [])
+
+    def test_released_but_undeletable_lock_is_broken(self) -> None:
+        lock = self._lock_path()
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text("", encoding="utf-8")
+        old = time.time() - 3
+        os.utime(lock, (old, old))
+        self.assertTrue(sig.emit(self.root, self._session_rec("d")))
+        self.assertEqual([r["session_id"] for r in read_signals(self.root)], ["d"])
+        self.assertFalse(lock.exists())
+
+    def test_writers_never_share_a_tmp_name(self) -> None:
+        seen: list[str] = []
+        real = sig._os_replace
+
+        def slow(src: Path, dst: Path) -> None:
+            seen.append(src.name)
+            time.sleep(0.05)
+            real(src, dst)
+
+        results: dict[str, bool] = {}
+
+        def writer(sid: str) -> None:
+            results[sid] = sig.replace_session(self.root, sid, [self._session_rec(sid)])
+
+        sig._os_replace = slow
+        try:
+            threads = [threading.Thread(target=writer, args=(sid,)) for sid in ("t1", "t2")]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        finally:
+            sig._os_replace = real
+        self.assertEqual(results, {"t1": True, "t2": True})
+        self.assertEqual(len(seen), 2)
+        self.assertNotEqual(seen[0], seen[1])
+        self.assertTrue(all(name.startswith("signals.jsonl.") and name.endswith(".tmp") for name in seen))
 
     def test_sessions_since_is_anchored_not_counted(self) -> None:
         def s(sid: str, started: str) -> dict:
