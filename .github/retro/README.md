@@ -14,7 +14,10 @@ transcript Claude Code already keeps on disk and appends metadata to
 `.coograph/signals.jsonl` (gitignored). `warn-scope.py` and
 `block-generated.py` append a violation each time they fire, and every rule
 hook appends a decision saying what it did about which tool call. When Retro
-is not enabled (no `rules.json`), nothing is written at all.
+is not enabled (no `rules.json`), nothing is written at all. A write retries
+briefly, half a second at most, when the operating system refuses the rename
+or the lock removal, which Windows does while another process holds the file;
+it still never raises into a hook.
 
 The store logic lives in one file, `.github/retro/_coograph_signals.py`,
 shared by the hooks and the analyzer. `.claude/hooks/_coograph_signals.py`
