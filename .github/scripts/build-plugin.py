@@ -29,7 +29,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 PLUGIN_NAME = "coograph"
-VERSION = "1.6.0"  # bump on every release so marketplace Update picks it up
+VERSION = "1.7.0"  # bump on every release so marketplace Update picks it up
 DESCRIPTION = (
     "Graph-first AI coding workflow: Plan, Propose, Apply, Review, Archive with "
     "OpenSpec gates, evidence-based agents, and guardrail hooks."
