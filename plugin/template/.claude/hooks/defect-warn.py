@@ -49,8 +49,8 @@ except ImportError:  # guard not copied next to this hook: run unguarded
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
 DELEGATION_TOOLS = {"Task", "Agent"}
-REVIEW_NAME_RE = re.compile(r"coograph[-:]?(review|verif)", re.IGNORECASE)
-REVIEW_PROMPT_RE = re.compile(r"/\s*coograph[-:]?(review|verify)", re.IGNORECASE)
+REVIEW_NAME_RE = re.compile(r"coograph[-:]?(ultra-)?(review|verif)", re.IGNORECASE)
+REVIEW_PROMPT_RE = re.compile(r"/\s*coograph[-:]?(ultra-)?(review|verify)", re.IGNORECASE)
 GIT_COMMIT_RE = re.compile(r"(^|[;&|]\s*)git\s+(-[^\s]+\s+)*commit\b")
 SOURCE_SUFFIXES = {
     ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".vue",

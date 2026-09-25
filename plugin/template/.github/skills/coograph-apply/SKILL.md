@@ -63,7 +63,7 @@ Fix any failures before proceeding.
 
 ## Step 6: Review gate (standard changes only)
 
-Invoke `@Reviewer` (VS Code) or run `/coograph-review` (Claude Code).
+Invoke `@Reviewer` (VS Code) or run `/coograph-review` (Claude Code). When the change is big (more than ~15 files, or anything with queue jobs, locks, state transitions, data migrations or cross-service contracts), tell the user that `/coograph-ultra-review` exists - a multi-agent hostile review with adversarial verification, about a million tokens and twenty minutes - and offer it; run it only when asked.
 
 - If **REQUEST_CHANGES**: add findings as new tasks under a "Review Fixes" heading in `tasks.md`. Implement fixes, then re-review changed files only.
 - **Circuit breaker**: after 3 review cycles on the same area, STOP and ask the user.

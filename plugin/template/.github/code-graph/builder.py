@@ -486,6 +486,12 @@ def _link_calls(conn: sqlite3.Connection) -> None:
     Parsers emit (fn_nid, callee_name_string, 'calls') edges.
     This step resolves the name strings to actual node IDs where possible.
     Same-file matches are preferred; unresolvable edges are deleted.
+
+    Only *unresolved* rows are considered: a row whose `dst` is already a node ID
+    was resolved by an earlier run. Re-processing those would delete them, because
+    a node ID never matches a function name — which is how an incremental update
+    used to wipe the whole call graph. `build()` is unaffected either way; it
+    starts from an empty edges table, so every row it sees is unresolved.
     """
     # Index: name -> list of (file, nid) for all callable nodes
     by_name: dict[str, list[tuple[str, str]]] = {}
@@ -506,7 +512,8 @@ def _link_calls(conn: sqlite3.Connection) -> None:
     deletions: list[tuple[str, str, str]] = []
 
     for src_id, callee_name in list(conn.execute(
-        "SELECT src, dst FROM edges WHERE kind='calls'"
+        "SELECT src, dst FROM edges "
+        "WHERE kind='calls' AND dst NOT IN (SELECT id FROM nodes)"
     )):
         deletions.append((src_id, callee_name, 'calls'))
         candidates = by_name.get(callee_name, [])

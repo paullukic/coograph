@@ -338,3 +338,4 @@ Every finding that references specific code **must** include a verbatim quote fr
 - Did I trace logic paths for complex changes (not just skim)?
 - Is my verdict clear and justified?
 - Did I avoid cosmetic refactor suggestions? (Structural simplification findings with concrete alternatives are OK.)
+- Is the change big (more than ~15 files, queue jobs, locks, state transitions, data migrations, cross-service contracts)? Then end with one line offering the `coograph-ultra-review` skill — several reviewers, one dimension each, every finding attacked by refuters; about a million tokens — and leave the decision to the user.

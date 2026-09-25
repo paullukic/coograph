@@ -40,7 +40,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_SEED = SCRIPT_DIR / "rules.seed.json"
 
 INSTRUCTION_FILES = ["CLAUDE.md", "AGENTS.md", ".github/copilot-instructions.md"]
-REVIEW_SKILLS = {"coograph-review", "coograph-verify", "coograph:coograph-review", "coograph:coograph-verify"}
+REVIEW_SKILLS = {"coograph-review", "coograph-verify", "coograph-ultra-review", "coograph:coograph-review", "coograph:coograph-verify", "coograph:coograph-ultra-review"}
 BACKTICK_PATH_RE = re.compile(r"`([^`\s]+)`")
 PATH_SUFFIXES = {
     ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java",
@@ -273,7 +273,7 @@ def _adherence(sessions: dict[str, dict]) -> dict:
     editing = {s: e for s, e in sessions.items() if int(e.get("edited_files", 0) or 0) >= 1}
     reviewed = sum(
         1 for e in editing.values()
-        if any(str(s) in REVIEW_SKILLS or str(s).endswith("coograph-review") or str(s).endswith("coograph-verify")
+        if any(str(s) in REVIEW_SKILLS or str(s).endswith("coograph-review") or str(s).endswith("coograph-verify") or str(s).endswith("coograph-ultra-review")
                for s in e.get("skills_invoked") or [])
     )
     n = len(editing)

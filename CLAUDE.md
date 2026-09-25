@@ -108,7 +108,7 @@ See `openspec/changes/archive/` for reference. **Wait for user approval** before
 
 1. **Quality gates** — run typecheck, lint, format. Fix until clean.
 2. **Feature inventory** — for every modified file, verify all pre-existing features are preserved. For new files, verify against spec.
-3. **Review gate** — run `/coograph-review`. Fix Critical/Warning findings. Re-run quality gates after fixes. Re-review only if fixes were substantial.
+3. **Review gate** — run `/coograph-review`. Fix Critical/Warning findings. Re-run quality gates after fixes. Re-review only if fixes were substantial. For a big change (more than ~15 files, a commit stack going to people for approval, or anything with queue jobs, locks, state transitions, data migrations or cross-service contracts) say that `/coograph-ultra-review` exists — a multi-agent hostile review with adversarial verification, about a million tokens and twenty minutes — and offer to run it. Optional; never run it unasked.
 4. **Done**: declare completion. Run `python3 .github/retro/retro.py --status`; if it exits 0, ask one line: `Run /coograph-retro now? (<n> sessions since last retro)`. If the file is missing, skip silently. Then ask the user for next steps.
 
 ### Archiving
@@ -120,6 +120,7 @@ Move completed OpenSpecs from `openspec/changes/<slug>/` to `openspec/changes/ar
 | Situation | Command |
 |-----------|---------|
 | Code review or convention audit | `/coograph-review` |
+| Deep review of a big change before approvals (multi-agent, adversarial; optional, costly) — full PR, fix batch (delta) or a plan before code | `/coograph-ultra-review` |
 | Bug investigation, build errors | `/coograph-debug` |
 | Planning / unclear requirements | `/coograph-plan` |
 | Completion evidence, verification | `/coograph-verify` |
