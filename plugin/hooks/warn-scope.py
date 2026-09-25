@@ -37,13 +37,22 @@ PATH_SUFFIXES = {
 }
 
 
+def _strip_dot_slash(token: str) -> str:
+    """Drop a leading './' (repeated if present). A leading '.' that names a
+    dotfile directory stays: '.github/x' is '.github/x', not 'github/x'."""
+    token = token.strip()
+    while token.startswith("./"):
+        token = token[2:]
+    return token
+
+
 def _extract_path(payload: dict) -> str | None:
     tool_input = payload.get("tool_input") or {}
     return tool_input.get("file_path") or tool_input.get("notebook_path")
 
 
 def _looks_like_path(token: str) -> bool:
-    token = token.strip().lstrip("./")
+    token = _strip_dot_slash(token)
     if not token or token.startswith(("http://", "https://", "-")):
         return False
     if "/" in token:
@@ -76,7 +85,7 @@ def _active_openspec(cwd: Path) -> tuple[str, set[str]] | None:
 
     paths: set[str] = set()
     for match in BACKTICK_PATH_RE.finditer(text):
-        token = match.group(1).strip().lstrip("./")
+        token = _strip_dot_slash(match.group(1))
         if _looks_like_path(token):
             paths.add(token)
     return active.name, paths
