@@ -1,9 +1,12 @@
 {
   "mcpServers": {
     "code-graph": {
+      "type": "stdio",
       "command": "uv",
       "args": [
         "run",
+        "-p",
+        "3.12",
         "--with-requirements",
         ".github/code-graph/requirements.txt",
         ".github/code-graph/server.py"

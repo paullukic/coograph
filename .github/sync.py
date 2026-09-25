@@ -27,6 +27,13 @@ LOG_FILE = Path(__file__).parent / "sync.log"
 SKIP_DIRS = {"node_modules", "__pycache__", ".code-graph", "tests"}
 SKIP_SUFFIXES = {".bak", ".pyc", ".db"}
 
+# Interpreter `uv run` is pinned to. Without it uv resolves against the machine's
+# default Python, and on a default older than 3.10 the graph build dies with
+# "your requirements are unsatisfiable" (mcp requires 3.10+). uv downloads a
+# managed interpreter on demand, so this needs nothing installed. Keep in step
+# with the pin in .mcp.json and in coograph-init's SKILL.md.
+UV_PYTHON = "3.12"
+
 # Never overwrite these - user has customized them during initialization.
 # rules.json is the per-project Retro registry: local edits, thresholds and
 # last_retro must survive a sync. New seeded rules reach it from
@@ -254,6 +261,61 @@ def _sync_retro(path: Path, prefix: str, dry_run: bool = False) -> int:
     return n
 
 
+def _sync_mcp_config(src: Path, dst: Path, prefix: str, dry_run: bool = False) -> bool:
+    """Write the project's .mcp.json, merging rather than replacing.
+
+    A project's MCP config is not template-owned: it can carry other servers and
+    local edits (an interpreter pin, a different transport). Sync used to
+    `shutil.copy2` over it, which silently reverted all of that on every pull.
+    Only the `code-graph` entry belongs to the template, so only that key is
+    written; everything else in the file is left exactly as it was.
+
+    Returns True when the file was written (or would be, on a dry run).
+    """
+    key = "code-graph"
+    try:
+        template = json.loads(src.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        log.warning("  template .mcp.json unreadable, skipped: %s", e)
+        return False
+    entry = template.get("mcpServers", {}).get(key)
+    if entry is None:
+        log.warning("  template .mcp.json has no '%s' server, skipped", key)
+        return False
+
+    if not dst.exists():
+        if not dry_run:
+            dst.write_text(json.dumps(template, indent=2) + "\n", encoding="utf-8")
+        log.info("  %s.mcp.json  1 file (created)", prefix)
+        return True
+
+    # A malformed project config is the user's file, not ours: warn and move on
+    # rather than aborting this project's sync (or overwriting their edits).
+    try:
+        current = json.loads(dst.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        log.warning("  %s.mcp.json unparseable, left untouched: %s", prefix, e)
+        return False
+    if not isinstance(current, dict):
+        log.warning("  %s.mcp.json is not a JSON object, left untouched", prefix)
+        return False
+
+    servers = current.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        log.warning("  %s.mcp.json has a non-object 'mcpServers', left untouched",
+                    prefix)
+        return False
+    if servers.get(key) == entry:
+        log.info("  %s.mcp.json  up to date", prefix)
+        return False
+
+    servers[key] = entry
+    if not dry_run:
+        dst.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
+    log.info("  %s.mcp.json  '%s' entry merged", prefix, key)
+    return True
+
+
 def _cleanup_obsolete(project_path: Path, dry_run: bool = False) -> int:
     """Remove paths in OBSOLETE_PATHS from project_path. Returns removed count."""
     removed = 0
@@ -375,10 +437,8 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
 
         mcp_src = TEMPLATE_ROOT / ".mcp.json"
         if mcp_src.exists():
-            if not dry_run:
-                shutil.copy2(mcp_src, path / ".mcp.json")
-            log.info("  %s.mcp.json  1 file", prefix)
-            total += 1
+            if _sync_mcp_config(mcp_src, path / ".mcp.json", prefix, dry_run=dry_run):
+                total += 1
     elif (path / ".github" / "code-graph").exists():
         log.warning("  code_graph is false but %s has .github/code-graph/ "
                      "- set code_graph: true in projects.json to sync updates", path)
@@ -472,8 +532,9 @@ def _rebuild_graph(project_path: Path) -> None:
         return
 
     if uv and reqs.exists():
-        cmd_base = [str(uv), "run", "--with-requirements", str(reqs), str(server)]
-        log.info("BUILD graph (uv + tree-sitter)...")
+        cmd_base = [str(uv), "run", "-p", UV_PYTHON,
+                    "--with-requirements", str(reqs), str(server)]
+        log.info("BUILD graph (uv + tree-sitter, python %s)...", UV_PYTHON)
     else:
         cmd_base = [sys.executable, str(server)]
         log.info("BUILD graph (python fallback)...")
