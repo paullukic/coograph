@@ -555,6 +555,31 @@ class HookModeTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(len([r for r in read_signals(self.root) if r["kind"] == "session"]), 1)
 
+    def test_session_end_derives_outcomes_for_hook_decisions(self) -> None:
+        """The SessionEnd path, not just capture_one in-process: a decision the
+        hook wrote earlier in the session gets its outcome at session end."""
+        t = Transcript("end-2")
+        tid = t.tool("Edit", file_path=str(self.root / "src" / "b.ts"))
+        t.result(tid)
+        t.user("no, not that file")
+        path = t.write(self.base / "tx" / "end-2.jsonl")
+        self.assertTrue(sig.emit_decision(
+            self.root, {"session_id": "end-2", "tool_use_id": tid}, "scope", "warned",
+            "warn-scope.py", str(self.root / "src" / "b.ts"),
+        ))
+        proc = self._run("capture-signals.py", {
+            "hook_event_name": "SessionEnd", "session_id": "end-2",
+            "transcript_path": str(path), "cwd": str(self.root), "reason": "exit",
+        })
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        recs = read_signals(self.root)
+        outcomes = [r for r in recs if r["kind"] == "outcome"]
+        self.assertEqual(len(outcomes), 1, recs)
+        self.assertEqual(outcomes[0]["evidence"], {
+            "tool_use_id": tid, "action": "warned", "proceeded": True,
+            "corrected": True, "reconciled": False, "repeated": 0,
+        })
+
     def test_session_end_silent_when_retro_disabled(self) -> None:
         root = make_project(self.base / "optout", rules=False)
         t = Transcript("opt-1")
