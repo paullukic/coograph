@@ -15,10 +15,12 @@ one: the `Skill` tool, a delegation to the reviewer or verifier agent, and the
 which is the only event that carries it - a typed command is a user message,
 not a tool call).
 
-This hook records nothing. `defect` already has a transcript detector, and a
-hook-emitted copy would be counted alongside real fix-commit findings by
-`summarize`, letting the hook's own warnings push its rule toward `hook-block`
-with no defect ever observed. The detector measures; this hook warns.
+This hook records decisions, never violations. `defect` already has a
+transcript detector, and a hook-emitted copy would be counted alongside real
+fix-commit findings by `summarize`, letting the hook's own warnings push its
+rule toward `hook-block` with no defect ever observed. The detector measures
+the rule; the decision record (warned / suppressed, with the tool_use_id) lets
+capture-signals.py learn whether a review followed the warning.
 
 Markers under .coograph/markers/, keyed by session id:
   defect-edited-<sid>    a source file was edited this session
@@ -45,6 +47,10 @@ try:
 except ImportError:  # guard not copied next to this hook: run unguarded
     def should_skip(payload: dict, hook_file: str) -> bool:
         return False
+try:
+    import _coograph_signals as signals  # shim in this directory -> .github/retro/
+except ImportError:  # without the store the hook still warns, it just records nothing
+    signals = None
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
@@ -147,6 +153,7 @@ def main() -> int:
     if _marker(cwd, "reviewed", sid).exists():
         return 0
     if _marker(cwd, "warned", sid).exists():
+        _decide(cwd, payload, "suppressed")
         return 0
 
     print(
@@ -155,7 +162,18 @@ def main() -> int:
         file=sys.stderr,
     )
     _touch(_marker(cwd, "warned", sid))
+    _decide(cwd, payload, "warned")
     return 1
+
+
+def _decide(cwd: Path, payload: dict, action: str) -> None:
+    """Record the decision for Retro. Never affects the hook's own behavior."""
+    if signals is None:
+        return
+    try:
+        signals.emit_decision(cwd, payload, "defect", action, __file__)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

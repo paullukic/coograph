@@ -112,6 +112,7 @@ class Parsed:
         self.results: dict[str, bool] = {}       # tool_use_id -> is_error
         self.usage_by_message: dict[str, dict] = {}
         self.corrections: list[dict] = []        # {pattern, after_tool}
+        self.user_turns: list[dict] = []         # {ts, corrected}: every user text message
         # True once any non-sidechain tool_use happened since the last user
         # text. A correction usually follows a turn of tool activity that
         # ended in plain text, so "the immediately preceding message had a
@@ -177,6 +178,7 @@ class Parsed:
         if texts and not obj.get("isSidechain") and not obj.get("isMeta"):
             joined = "\n".join(texts)
             if not joined.lstrip().startswith("<"):  # skip system-injected blocks
+                matched = False
                 for pat in patterns:
                     if not pat.get("enabled", True):
                         continue
@@ -189,9 +191,13 @@ class Parsed:
                                 # allow-list; read by detect() for the stamp.
                                 "_ts": self.at,
                             })
+                            matched = True
                             break
                     except re.error:
                         continue
+                # The outcome of a hook decision asks "what did the user say
+                # next"; only the timestamp and the match survive.
+                self.user_turns.append({"ts": self.at, "corrected": matched})
             self._tool_since_user_text = False
 
 
@@ -256,16 +262,101 @@ def _touches_openspec_changes(parsed: Parsed, cwd: Path) -> bool:
 
 
 def _active_openspec_exists(cwd: Path) -> bool:
-    changes = cwd / "openspec" / "changes"
-    try:
-        return any(p.is_dir() and p.name != "archive" for p in changes.iterdir())
-    except OSError:
-        return False
+    # Shared with openspec-gate-warn.py so the hook and this detector agree.
+    return bool(signals and signals.active_openspec_exists(cwd))
 
 
 # Dependency detection lives in the shared module so the hook that warns about
 # it and this detector that records it cannot drift apart.
 _dep_command = signals.dep_command if signals else (lambda command: False)
+
+
+# ---------------------------------------------------------------------------
+# Outcomes of hook decisions
+#
+# A hook records what it decided about one tool call (warned / blocked /
+# suppressed) with that call's tool_use_id. Here the transcript says what
+# happened next. Joined by id, never by timestamp: hook records carry local
+# time, transcripts carry UTC.
+# ---------------------------------------------------------------------------
+
+REVIEW_SKILL_RE = re.compile(r"coograph[-:]?(ultra-)?(review|verif)", re.IGNORECASE)
+
+
+def _is_tasks_md(rel: str) -> bool:
+    return rel.startswith("openspec/changes/") and rel.endswith("/tasks.md")
+
+
+def _touches_openspec(use: dict, cwd: Path) -> bool:
+    if use["file"] and "openspec/changes" in signals.rel_path(cwd, use["file"]):
+        return True
+    return bool(use["command"] and "openspec/changes" in use["command"].replace("\\", "/"))
+
+
+def _reconciled(rule: str, use: dict, later: list[dict], cwd: Path) -> bool | None:
+    """Did something after the decision answer the warning? None when the rule
+    has no observable answer (a user's approval of a dependency is not in the
+    transcript)."""
+    if rule == "scope":
+        return any(
+            v["name"] in EDIT_TOOLS and v["file"] and _is_tasks_md(signals.rel_path(cwd, v["file"]))
+            for v in later
+        )
+    if rule == "openspec-gate":
+        return any(_touches_openspec(v, cwd) for v in later)
+    if rule == "defect":
+        return any(v["name"] == "Skill" and REVIEW_SKILL_RE.search(v["skill"]) for v in later)
+    if rule == "generated-files":
+        if not use["file"]:
+            return None
+        path = signals.rel_path(cwd, use["file"])
+        return not any(
+            v["name"] in EDIT_TOOLS and v["file"] and signals.rel_path(cwd, v["file"]) == path
+            for v in later
+        )
+    return None
+
+
+def derive_outcomes(parsed: Parsed, cwd: Path, decisions: list[dict]) -> list[dict]:
+    """One outcome per decision whose tool_use_id names a tool use here.
+
+    Each dict is outcome evidence plus two private keys the caller pops:
+    `_rule` and `_ts`.
+    """
+    by_id = {u["id"]: u for u in parsed.tool_uses if u["id"]}
+    joined: list[tuple[str, str, dict]] = []
+    for d in decisions:
+        ev = d.get("evidence") or {}
+        use = by_id.get(str(ev.get("tool_use_id") or ""))
+        if use is None:
+            continue
+        joined.append((str(d.get("rule") or "none"), str(ev.get("action") or ""), use))
+
+    indices_by_rule: dict[str, list[int]] = {}
+    for rule, _, use in joined:
+        indices_by_rule.setdefault(rule, []).append(use["index"])
+
+    out: list[dict] = []
+    for rule, action, use in joined:
+        i = use["index"]
+        ts = str(use.get("ts") or "")
+        corrected = False
+        for turn in parsed.user_turns:
+            if str(turn["ts"]) > ts:
+                corrected = bool(turn["corrected"])
+                break
+        later = [v for v in parsed.tool_uses if v["index"] > i]
+        out.append({
+            "tool_use_id": use["id"],
+            "action": action,
+            "proceeded": use["id"] in parsed.results and action != "blocked",
+            "corrected": corrected,
+            "reconciled": _reconciled(rule, use, later, cwd),
+            "repeated": sum(1 for j in indices_by_rule[rule] if j > i),
+            "_rule": rule,
+            "_ts": ts,
+        })
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +477,8 @@ def detect_defects(cwd: Path, parsed: Parsed, lookback_days: int) -> list[dict]:
     return found
 
 
-def detect(parsed: Parsed, cwd: Path, rules: dict | None) -> list[dict]:
+def detect(parsed: Parsed, cwd: Path, rules: dict | None,
+           decisions: list[dict] | None = None) -> list[dict]:
     sid = parsed.session_id
     records: list[dict] = []
     graph_db_present = (cwd / ".code-graph" / "graph.db").exists()
@@ -515,6 +607,12 @@ def detect(parsed: Parsed, cwd: Path, rules: dict | None) -> list[dict]:
                     "program": "", "manifest": signals.rel_path(cwd, u["file"]), "via": "edit",
                 }, at=u.get("ts", ""))
 
+    # outcomes of hook decisions ----------------------------------------
+    for ev in derive_outcomes(parsed, cwd, decisions or []):
+        rule = ev.pop("_rule")
+        at = ev.pop("_ts")
+        rec("outcome", rule, "outcome", "deterministic", ev, at=at)
+
     # session summary ---------------------------------------------------
     tools_used = Counter(u["name"] for u in parsed.tool_uses if u["name"])
     usage = {"input": 0, "output": 0, "cache_read": 0, "cache_create": 0}
@@ -556,7 +654,13 @@ def capture_one(path: Path, cwd: Path, rules: dict | None, known: dict[str, int]
     sid = signals.safe_session_id(parsed.session_id)
     if not force and known.get(sid) == parsed.message_count:
         return "skipped"
-    records = detect(parsed, cwd, rules)
+    # The hooks' own decisions for this session are already in the store;
+    # the transcript now says what followed each one.
+    decisions = [
+        r for r in signals.load(cwd)
+        if r.get("kind") == "decision" and r.get("session_id") == sid
+    ]
+    records = detect(parsed, cwd, rules, decisions)
     if not signals.replace_session(cwd, sid, records):
         return "failed"
     known[sid] = parsed.message_count

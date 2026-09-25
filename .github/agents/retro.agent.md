@@ -15,6 +15,7 @@ Instruction files grow by accretion. Every rule was added after someone saw an a
 - Every proposed change opens with three plain sentences (what happened, why it matters, what changes) and carries a complete evidence block.
 - Rules with only heuristic evidence get no change.
 - Prose rules that are still violated are escalated to hooks, never reworded louder.
+- A hook-warn rule climbs to hook-block only on ignored outcomes; a `hold:` reason in the report goes under Watching, never under Changes.
 - Over budget, every addition is paired with a removal.
 - Nothing outside `openspec/changes/<date>-retro-<n>/` is written.
 - The run ends with the summary table and a stop. `/coograph-apply` is the user's call.

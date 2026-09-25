@@ -192,10 +192,91 @@ class DetectorTests(unittest.TestCase):
         t.result(tid)
         t.user(f"No, {SENTINEL} again")
         path = t.write(self._tpath())
+        # A hook decision whose path carries the sentinel outside the project,
+        # joined to the transcript so an outcome is derived from the user turn.
+        self.assertTrue(sig.emit_decision(
+            self.root, {"session_id": "sentinel", "tool_use_id": tid}, "scope", "warned",
+            "warn-scope.py", str(self.base / SENTINEL / "x.ts"),
+        ))
         _capture(self.root, path)
         raw = (self.root / ".coograph" / "signals.jsonl").read_text(encoding="utf-8")
         self.assertNotIn(SENTINEL, raw)
+        self.assertEqual(len(_by(read_signals(self.root), "outcome")), 1)
         self.assertTrue(raw.strip())
+
+    def _decide(self, sid: str, tid: str, rule: str, action: str = "warned", path: str = "") -> None:
+        self.assertTrue(sig.emit_decision(
+            self.root, {"session_id": sid, "tool_use_id": tid}, rule, action, f"{rule}-hook.py", path,
+        ))
+
+    def test_outcomes_join_decisions_to_the_transcript(self) -> None:
+        t = Transcript("o1")
+        first = t.tool("Edit", file_path=str(self.root / "src" / "b.ts"))
+        t.result(first)
+        t.user("no, stay in scope")
+        second = t.tool("Edit", file_path=str(self.root / "src" / "c.ts"))
+        t.result(second)
+        fix = t.tool("Edit", file_path=str(self.root / "openspec" / "changes" / "x" / "tasks.md"))
+        t.result(fix)
+        self._decide("o1", first, "scope", path=str(self.root / "src" / "b.ts"))
+        self._decide("o1", second, "scope", path=str(self.root / "src" / "c.ts"))
+
+        recs = _by(_capture(self.root, t.write(self._tpath())), "outcome")
+        self.assertEqual(len(recs), 2)
+        by_id = {r["evidence"]["tool_use_id"]: r for r in recs}
+        self.assertEqual(by_id[first]["evidence"], {
+            "tool_use_id": first, "action": "warned", "proceeded": True,
+            "corrected": True, "reconciled": True, "repeated": 1,
+        })
+        self.assertEqual(by_id[second]["evidence"], {
+            "tool_use_id": second, "action": "warned", "proceeded": True,
+            "corrected": False, "reconciled": True, "repeated": 0,
+        })
+        self.assertTrue(all(r["rule"] == "scope" and r["origin"] == "transcript" for r in recs))
+        self.assertEqual(_by(read_signals(self.root), "scope-warning"), [])
+
+    def test_outcome_needs_a_matching_tool_use(self) -> None:
+        t = Transcript("o2")
+        t.result(t.tool("Edit", file_path=str(self.root / "src" / "a.ts")))
+        self._decide("o2", "toolu_9999", "scope")
+        recs = _capture(self.root, t.write(self._tpath()))
+        self.assertEqual(_by(recs, "outcome"), [])
+        self.assertEqual(len(_by(recs, "session")), 1)
+
+    def test_outcomes_are_replaced_on_recapture(self) -> None:
+        t = Transcript("o3")
+        tid = t.tool("Bash", command="npm install left-pad")
+        t.result(tid)
+        self._decide("o3", tid, "no-new-deps")
+        path = t.write(self._tpath())
+        _capture(self.root, path)
+        cap.capture_one(path, self.root, sig.load_rules(self.root), sig.known_sessions(self.root), force=True)
+        outcomes = _by(read_signals(self.root), "outcome")
+        self.assertEqual(len(outcomes), 1)
+        self.assertIsNone(outcomes[0]["evidence"]["reconciled"])
+        self.assertEqual(len(_by(read_signals(self.root), "decision")), 1)
+
+    def test_blocked_decision_reconciles_when_the_path_is_left_alone(self) -> None:
+        t = Transcript("o4")
+        blocked = t.tool("Write", file_path=str(self.root / "dist" / "bundle.js"))
+        t.result(blocked, content="BLOCKED", is_error=True)
+        t.result(t.tool("Edit", file_path=str(self.root / "src" / "a.ts")))
+        self._decide("o4", blocked, "generated-files", "blocked", str(self.root / "dist" / "bundle.js"))
+        recs = _by(_capture(self.root, t.write(self._tpath())), "outcome")
+        self.assertEqual(recs[0]["evidence"], {
+            "tool_use_id": blocked, "action": "blocked", "proceeded": False,
+            "corrected": False, "reconciled": True, "repeated": 0,
+        })
+
+    def test_defect_outcome_reconciles_on_a_review(self) -> None:
+        t = Transcript("o5")
+        commit = t.tool("Bash", command="git commit -m x")
+        t.result(commit)
+        t.result(t.tool("Skill", skill="coograph-review"))
+        self._decide("o5", commit, "defect")
+        recs = _by(_capture(self.root, t.write(self._tpath())), "outcome")
+        self.assertEqual(len(recs), 1)
+        self.assertTrue(recs[0]["evidence"]["reconciled"])
 
     def test_graph_first_mcp_later(self) -> None:
         t = Transcript("g1")
@@ -434,6 +515,18 @@ def _isolated_env(root: Path, base: Path) -> dict[str, str]:
     }
 
 
+class HookDecisionRulesTests(unittest.TestCase):
+    """Every rule hook records what it decided, so capture can learn what followed."""
+
+    HOOKS = Path(__file__).resolve().parents[3] / ".claude" / "hooks"
+
+    def test_every_rule_hook_records_a_decision(self) -> None:
+        hooks = sorted(self.HOOKS.glob("*-warn.py")) + sorted(self.HOOKS.glob("block-*.py")) + [self.HOOKS / "warn-scope.py"]
+        self.assertGreaterEqual(len(hooks), 5)
+        for hook in hooks:
+            self.assertIn("emit_decision", hook.read_text(encoding="utf-8"), f"{hook.name} records no decision")
+
+
 class HookModeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -578,11 +671,19 @@ class HookModeTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("[warn-scope]", proc.stderr)
         recs = read_signals(root)
-        self.assertEqual(len(recs), 1)
-        self.assertEqual(recs[0]["rule"], "scope")
-        self.assertEqual(recs[0]["origin"], "hook")
-        self.assertEqual(recs[0]["evidence"]["path"], "src/b.ts")
-        self.assertEqual(recs[0]["evidence"]["openspec"], "2026-09-01-active")
+        violations = [r for r in recs if r["kind"] == "violation"]
+        decisions = [r for r in recs if r["kind"] == "decision"]
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0]["rule"], "scope")
+        self.assertEqual(violations[0]["origin"], "hook")
+        self.assertEqual(violations[0]["evidence"]["path"], "src/b.ts")
+        self.assertEqual(violations[0]["evidence"]["openspec"], "2026-09-01-active")
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0]["rule"], "scope")
+        self.assertEqual(decisions[0]["origin"], "hook")
+        self.assertEqual(decisions[0]["evidence"], {
+            "action": "warned", "tool_use_id": "t1", "hook": "warn-scope.py", "path": "src/b.ts",
+        })
 
     def test_warn_scope_scope_set_keeps_dotfile_directories(self) -> None:
         root = make_project(self.base / "dotted", active_openspec=True)
@@ -611,10 +712,15 @@ class HookModeTests(unittest.TestCase):
         recs = read_signals(self.root)
         self.assertEqual(recs[0]["rule"], "generated-files")
         self.assertEqual(recs[0]["evidence"], {"path": "dist/bundle.js", "reason": "directory"})
+        decision = [r for r in recs if r["kind"] == "decision"][0]
+        self.assertEqual(decision["rule"], "generated-files")
+        self.assertEqual(decision["evidence"], {
+            "action": "blocked", "tool_use_id": "t2", "hook": "block-generated.py", "path": "dist/bundle.js",
+        })
 
 
-    def test_no_new_deps_warns_once_and_records_nothing(self) -> None:
-        """The rule has a transcript detector; a hook record would double-count it."""
+    def test_no_new_deps_warns_once_and_records_decisions(self) -> None:
+        """The rule has a transcript detector: the hook records what it decided, never a violation."""
         proc = self._run("no-new-deps-warn.py", {
             "hook_event_name": "PreToolUse", "tool_name": "Bash", "session_id": "nd1",
             "tool_use_id": "t3", "cwd": str(self.root),
@@ -622,7 +728,12 @@ class HookModeTests(unittest.TestCase):
         })
         self.assertEqual(proc.returncode, 1)
         self.assertIn("[no-new-deps]", proc.stderr)
-        self.assertEqual(read_signals(self.root), [])
+        recs = read_signals(self.root)
+        self.assertEqual([r["kind"] for r in recs], ["decision"])
+        self.assertEqual(recs[0]["rule"], "no-new-deps")
+        self.assertEqual(recs[0]["evidence"], {
+            "action": "warned", "tool_use_id": "t3", "hook": "no-new-deps-warn.py", "path": "",
+        })
 
         again = self._run("no-new-deps-warn.py", {
             "hook_event_name": "PreToolUse", "tool_name": "Bash", "session_id": "nd1",
@@ -631,6 +742,18 @@ class HookModeTests(unittest.TestCase):
         })
         self.assertEqual(again.returncode, 0)
         self.assertEqual(again.stderr.strip(), "")
+        recs = read_signals(self.root)
+        self.assertEqual([r["kind"] for r in recs], ["decision", "decision"])
+        self.assertEqual(recs[1]["evidence"]["action"], "suppressed")
+        self.assertEqual(recs[1]["evidence"]["tool_use_id"], "t4")
+
+        manifest = self._run("no-new-deps-warn.py", {
+            "hook_event_name": "PreToolUse", "tool_name": "Edit", "session_id": "nd2",
+            "tool_use_id": "t5", "cwd": str(self.root),
+            "tool_input": {"file_path": str(self.root / "package.json")},
+        })
+        self.assertEqual(manifest.returncode, 1)
+        self.assertEqual(read_signals(self.root)[-1]["evidence"]["path"], "package.json")
 
     def test_no_new_deps_agrees_with_its_detector(self) -> None:
         """Hook and detector share one implementation, so they cannot disagree."""
@@ -657,7 +780,12 @@ class HookModeTests(unittest.TestCase):
                                             "tool_input": {"command": "git commit -m x"}})
         self.assertEqual(proc.returncode, 1)
         self.assertIn("[defect-warn]", proc.stderr)
-        self.assertEqual(read_signals(self.root), [])
+        recs = read_signals(self.root)
+        self.assertEqual([r["kind"] for r in recs], ["decision"])
+        self.assertEqual(recs[0]["rule"], "defect")
+        self.assertEqual(recs[0]["evidence"], {
+            "action": "warned", "tool_use_id": "t5b", "hook": "defect-warn.py", "path": "",
+        })
 
     def test_defect_warn_silent_after_a_review(self) -> None:
         """Every route to a review counts: the Skill tool, a delegation, a typed command."""
@@ -690,6 +818,98 @@ class HookModeTests(unittest.TestCase):
         self.assertEqual(not_a_commit.returncode, 0)
 
 
+class OpenspecGateHookTests(unittest.TestCase):
+    """openspec-gate-warn.py mirrors the openspec-gate detector, live and once per session."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _gate(self, root: Path, sid: str, tool: str, tid: str, **inp) -> subprocess.CompletedProcess:
+        payload = {"hook_event_name": "PreToolUse", "tool_name": tool, "session_id": sid,
+                   "tool_use_id": tid, "cwd": str(root), "tool_input": inp}
+        return subprocess.run(
+            [sys.executable, str(root / ".claude" / "hooks" / "openspec-gate-warn.py")],
+            input=json.dumps(payload), capture_output=True, text=True,
+            env=_isolated_env(root, self.base), cwd=str(root),
+        )
+
+    def _marker(self, root: Path, kind: str, sid: str) -> Path:
+        return root / ".coograph" / "markers" / f"openspec-{kind}-{sid}"
+
+    def test_warns_once_on_the_second_source_file(self) -> None:
+        root = make_project(self.base / "gate")
+        first = self._gate(root, "g1", "Edit", "g1a", file_path=str(root / "src" / "a.ts"))
+        self.assertEqual((first.returncode, first.stderr), (0, ""))
+        self.assertEqual(self._marker(root, "edited", "g1").read_text().split(), ["src/a.ts"])
+
+        same = self._gate(root, "g1", "Edit", "g1a2", file_path=str(root / "src" / "a.ts"))
+        self.assertEqual(same.returncode, 0)
+        self.assertEqual(self._marker(root, "edited", "g1").read_text().split(), ["src/a.ts"])
+
+        second = self._gate(root, "g1", "Edit", "g1b", file_path=str(root / "src" / "b.ts"))
+        self.assertEqual(second.returncode, 1)
+        self.assertIn("[openspec-gate] second source file this session (src/b.ts)", second.stderr)
+        self.assertTrue(self._marker(root, "warned", "g1").exists())
+
+        third = self._gate(root, "g1", "Edit", "g1c", file_path=str(root / "src" / "c.ts"))
+        self.assertEqual((third.returncode, third.stderr), (0, ""))
+
+        recs = read_signals(root)
+        self.assertEqual([r["kind"] for r in recs], ["decision", "decision"])
+        self.assertTrue(all(r["rule"] == "openspec-gate" for r in recs))
+        self.assertEqual(recs[0]["evidence"], {
+            "action": "warned", "tool_use_id": "g1b", "hook": "openspec-gate-warn.py", "path": "src/b.ts",
+        })
+        self.assertEqual(recs[1]["evidence"]["action"], "suppressed")
+        self.assertEqual(recs[1]["evidence"]["tool_use_id"], "g1c")
+
+    def test_silent_when_an_openspec_is_touched(self) -> None:
+        root = make_project(self.base / "gate2")
+        self._gate(root, "g2", "Edit", "a", file_path=str(root / "src" / "a.ts"))
+        touch = self._gate(root, "g2", "Write", "b",
+                           file_path=str(root / "openspec" / "changes" / "2026-09-25-x" / "proposal.md"))
+        self.assertEqual(touch.returncode, 0)
+        self.assertTrue(self._marker(root, "touched", "g2").exists())
+        edit = self._gate(root, "g2", "Edit", "c", file_path=str(root / "src" / "b.ts"))
+        self.assertEqual((edit.returncode, edit.stderr), (0, ""))
+        self.assertEqual(read_signals(root), [])
+
+    def test_shell_command_naming_the_change_dir_counts_as_touching(self) -> None:
+        root = make_project(self.base / "gate3")
+        self._gate(root, "g3", "Edit", "a", file_path=str(root / "src" / "a.ts"))
+        shell = self._gate(root, "g3", "Bash", "b", command="mkdir -p openspec/changes/2026-09-25-x/specs")
+        self.assertEqual(shell.returncode, 0)
+        edit = self._gate(root, "g3", "Edit", "c", file_path=str(root / "src" / "b.ts"))
+        self.assertEqual((edit.returncode, edit.stderr), (0, ""))
+
+    def test_silent_with_an_active_change(self) -> None:
+        root = make_project(self.base / "gate4", active_openspec=True)
+        self._gate(root, "g4", "Edit", "a", file_path=str(root / "src" / "a.ts"))
+        edit = self._gate(root, "g4", "Edit", "b", file_path=str(root / "src" / "b.ts"))
+        self.assertEqual((edit.returncode, edit.stderr), (0, ""))
+        self.assertEqual(read_signals(root), [])
+
+    def test_external_and_openspec_paths_do_not_count(self) -> None:
+        root = make_project(self.base / "gate5")
+        for tid, path in (("a", str(self.base / "elsewhere" / "x.ts")),
+                          ("b", str(root / "openspec" / "architecture" / "notes.md")),
+                          ("c", str(root / "src" / "a.ts"))):
+            proc = self._gate(root, "g5", "Edit", tid, file_path=path)
+            self.assertEqual((proc.returncode, proc.stderr), (0, ""), path)
+        self.assertEqual(self._marker(root, "edited", "g5").read_text().split(), ["src/a.ts"])
+
+    def test_agrees_with_the_detector_on_the_active_change_check(self) -> None:
+        root = make_project(self.base / "gate6")
+        self.assertFalse(sig.active_openspec_exists(root))
+        (root / "openspec" / "changes" / "2026-09-25-live").mkdir()
+        self.assertTrue(sig.active_openspec_exists(root))
+        self.assertTrue(cap._active_openspec_exists(root))
+
+
 class HookEmissionRulesTests(unittest.TestCase):
     """A hook may only record a signal for a rule nothing else observes.
 
@@ -719,22 +939,25 @@ class HookEmissionRulesTests(unittest.TestCase):
                     detected.add(rule["id"])
         return detected
 
-    def test_no_hook_emits_for_a_transcript_detected_rule(self) -> None:
+    def _rule_hooks(self) -> list[Path]:
+        return sorted(self.HOOKS.glob("*-warn.py")) + sorted(self.HOOKS.glob("block-*.py")) + [self.HOOKS / "warn-scope.py"]
+
+    def test_no_hook_emits_a_violation_for_a_transcript_detected_rule(self) -> None:
         detected = self._transcript_detected_rules()
         self.assertTrue(detected, "expected capture-signals.py to record some rules")
 
         offenders = []
-        for hook in sorted(self.HOOKS.glob("*-warn.py")) + sorted(self.HOOKS.glob("block-*.py")):
+        for hook in self._rule_hooks():
             source = hook.read_text(encoding="utf-8")
-            if "signals.emit" not in source:
+            if 'kind="violation"' not in source and "kind='violation'" not in source:
                 continue
             for rule in detected:
                 if f'rule="{rule}"' in source or f"rule='{rule}'" in source:
-                    offenders.append(f"{hook.name} emits for '{rule}', which has a transcript detector")
+                    offenders.append(f"{hook.name} emits a violation for '{rule}', which has a transcript detector")
 
         self.assertEqual(
             offenders, [],
-            "a hook may not record a rule that capture-signals.py already records "
+            "a hook may not record a violation for a rule that capture-signals.py already records "
             "(see coograph-retro SKILL.md Step 2, rule 6): " + "; ".join(offenders),
         )
 

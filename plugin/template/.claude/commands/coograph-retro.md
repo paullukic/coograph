@@ -12,7 +12,7 @@ The full procedure lives in `.github/skills/coograph-retro/SKILL.md`. Follow tho
 
 1. **Status** `python3 .github/retro/retro.py --status`. Exit 4 means bootstrap (seed the registry, offer a transcript backfill from `~/.claude/projects/<slug>/`, with the user's consent). Exit 2 means the hooks are not installed; stop.
 2. **Analyze** `python3 .github/retro/retro.py --report`, then read `.coograph/retro/report.md` and `report.json`. Those are the only numbers you may cite.
-3. **Decide** changes by type (new-hook, edit-rule, add-rule, new-instruction-file, prune-rule) using the rules in the skill: evidence first, escalate instead of shouting, budget pairing, no silent loosening.
+3. **Decide** changes by type (new-hook, edit-rule, add-rule, new-instruction-file, prune-rule) using the rules in the skill: evidence first, escalate instead of shouting, outcomes gate the block rung, budget pairing, no silent loosening.
 4. **Write** `openspec/changes/<date>-retro-<n>/` with `.openspec.yaml`, `proposal.md`, `specs/guardrails/spec.md`, `tasks.md` (ending with Update registry and Rollback), and `patches/`.
 5. **Report** the summary table and stop.
 

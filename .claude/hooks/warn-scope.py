@@ -160,6 +160,10 @@ def _emit_signal(payload: dict, cwd: Path, rel: str, slug: str) -> None:
         ))
     except Exception:
         pass
+    try:
+        signals.emit_decision(cwd, payload, "scope", "warned", __file__, rel)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

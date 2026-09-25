@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "seed_version": 2,
+  "seed_version": 3,
   "rules": [
     {
       "id": "graph-first",
@@ -20,15 +20,15 @@
       "id": "openspec-gate",
       "title": "OpenSpec or stop: 2+ file changes need an approved proposal",
       "source": {
-        "file": "CLAUDE.md",
-        "anchor": "HARD RULE, OPENSPEC OR STOP"
+        "file": ".claude/hooks/openspec-gate-warn.py",
+        "anchor": "openspec-gate-warn"
       },
-      "enforcement": "prose",
+      "enforcement": "hook-warn",
       "hard": true,
       "detector": "openspec-gate",
       "added": "2026-09-19",
       "last_triggered": null,
-      "last_changed": null
+      "last_changed": "2026-09-25"
     },
     {
       "id": "scope",
@@ -124,7 +124,8 @@
     "instruction_token_budget": 8000,
     "retro_prompt_min_sessions": 3,
     "bootstrap_min_archives": 10,
-    "defect_lookback_days": 14
+    "defect_lookback_days": 14,
+    "escalate_ignored_rate": 0.5
   },
   "correction_patterns": [
     {
@@ -161,6 +162,9 @@
   "retention": {
     "max_sessions": 500
   },
+  "ignore_session_prefixes": [
+    "11111111-aaaa-4bbb-8ccc-"
+  ],
   "last_retro": {
     "date": "2026-09-25T09:01:37Z",
     "session_id": "0716f0ec-746c-4a09-b5de-df3767b44273",

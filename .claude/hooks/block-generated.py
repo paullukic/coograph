@@ -146,6 +146,10 @@ def _emit_signal(payload: dict, cwd: Path, rel: str, reason: str) -> None:
         ))
     except Exception:
         pass
+    try:
+        signals.emit_decision(cwd, payload, "generated-files", "blocked", __file__, rel)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
