@@ -144,7 +144,7 @@ There is no single command that works everywhere — each tool registers custom 
 | **Claude Code** | `/coograph-init` | `.claude/commands/coograph-init.md` |
 | **VS Code Copilot** | `/coograph-init` | `.github/skills/coograph-init/SKILL.md` |
 | **Codex CLI** | `$coograph-init` **or** "initialize the project" | `.agents/skills/coograph-init/SKILL.md` |
-| **OpenCode** | `/coograph-init` | `.opencode/commands/coograph-init.md` |
+| **OpenCode** | `/coograph-init` | `.opencode/commands/coograph-*.md` (all four) + `opencode.json` in the project root when code-graph is enabled |
 | **Cursor** | `/coograph-init` (string match — no menu) | `.cursor/rules/coograph.mdc` § Invocation |
 | **Devin Desktop** | `/coograph-init` (string match) | `.windsurfrules` § Invocation |
 | **Aider** | `/coograph-init` (string match) | `CONVENTIONS.md` § Invocation |

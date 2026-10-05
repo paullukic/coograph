@@ -18,7 +18,7 @@ Parses your repository into a SQLite graph (`.code-graph/graph.db`) that AI tool
 From your **project root**:
 
 ```bash
-uv run --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py --build
+uv run -p ">=3.10" --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py --build
 ```
 
 This parses all source files and writes `.code-graph/graph.db`.
@@ -28,7 +28,7 @@ This parses all source files and writes `.code-graph/graph.db`.
 After editing files, update only what changed:
 
 ```bash
-uv run --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py --update
+uv run -p ">=3.10" --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py --update
 ```
 
 Uses SHA-1 content hashes to detect changes. Also re-parses files that import from changed files so cross-file edges stay accurate. If `graph.db` doesn't exist yet, falls back to a full build.
@@ -38,7 +38,7 @@ Uses SHA-1 content hashes to detect changes. Also re-parses files that import fr
 Generate a standalone HTML graph visualization:
 
 ```bash
-uv run --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py --visualize
+uv run -p ">=3.10" --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py --visualize
 ```
 
 Outputs `.code-graph/graph.html`. Requires `node_modules/` (run `npm install` in this directory first).
@@ -47,11 +47,22 @@ Outputs `.code-graph/graph.html`. Requires `node_modules/` (run `npm install` in
 
 ```bash
 # With uv (recommended — auto-installs all dependencies):
-uv run --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py
+uv run -p ">=3.10" --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py
 
 # With pip:
 pip install "mcp>=1.0.0,<2"
 python .github/code-graph/server.py
+
+# On Windows machines where Smart App Control / Application Control blocks
+# uv-managed Python builds (every start dies with "DLL load failed while
+# importing _overlapped"), pin uv onto a system Python install first:
+$env:UV_NO_MANAGED_PYTHON="1"; $env:UV_PYTHON_DOWNLOADS="never"   # PowerShell
+# export UV_NO_MANAGED_PYTHON=1 UV_PYTHON_DOWNLOADS=never           # bash/WSL
+uv run -p ">=3.10" --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py
+
+# Or skip uv entirely with a system-Python venv:
+# python -m venv .code-graph/venv
+# .code-graph/venv/Scripts/python .github/code-graph/server.py   (after pip install -r requirements.txt)
 ```
 
 ## MCP Configuration
@@ -64,7 +75,8 @@ python .github/code-graph/server.py
     "code-graph": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--with-requirements", "${workspaceFolder}/.github/code-graph/requirements.txt", "${workspaceFolder}/.github/code-graph/server.py"]
+      "args": ["run", "-p", ">=3.10", "--with-requirements", "${workspaceFolder}/.github/code-graph/requirements.txt", "${workspaceFolder}/.github/code-graph/server.py"],
+      "env": { "UV_NO_MANAGED_PYTHON": "1", "UV_PYTHON_DOWNLOADS": "never" }
     }
   }
 }
@@ -78,11 +90,36 @@ python .github/code-graph/server.py
     "code-graph": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"]
+      "args": ["run", "-p", ">=3.10", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"],
+      "env": { "UV_NO_MANAGED_PYTHON": "1", "UV_PYTHON_DOWNLOADS": "never" }
     }
   }
 }
 ```
+
+### OpenCode (`opencode.json` in the workspace root)
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "skills": { "paths": [".github/skills"] },
+  "mcp": {
+    "code-graph": {
+      "type": "local",
+      "command": ["uv", "run", "-p", ">=3.10", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"],
+      "cwd": ".",
+      "enabled": true,
+      "timeout": 120000,
+      "environment": { "UV_NO_MANAGED_PYTHON": "1", "UV_PYTHON_DOWNLOADS": "never" }
+    }
+  }
+}
+```
+
+The `env`/`environment` pins keep uv on a system Python install where the machine's
+application-control policy blocks uv-managed Python builds; drop them if `uv run`
+works unmodified on your machine (see Requirements above). Keep `-p ">=3.10"` either way: a range, so uv takes any system Python new enough for `mcp`, where an exact version would fail under the pins on a machine without that exact system install. `timeout` matters for
+OpenCode — `build_graph`/`update_graph` exceed its 5-second MCP default.
 
 ## MCP Tools
 

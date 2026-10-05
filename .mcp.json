@@ -6,11 +6,15 @@
       "args": [
         "run",
         "-p",
-        "3.12",
+        ">=3.10",
         "--with-requirements",
         ".github/code-graph/requirements.txt",
         ".github/code-graph/server.py"
-      ]
+      ],
+      "env": {
+        "UV_NO_MANAGED_PYTHON": "1",
+        "UV_PYTHON_DOWNLOADS": "never"
+      }
     }
   }
 }
