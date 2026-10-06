@@ -1,9 +1,25 @@
 {
   "version": 1,
-  "always_loaded": ["CLAUDE.md", "AGENTS.md", ".github/copilot-instructions.md"],
-  "routers": ["*/AGENTS.md", "*/*/AGENTS.md"],
-  "docs": ["docs/features/*.md"],
-  "gotchas": ["GOTCHAS.md", "*/GOTCHAS.md", "*/*/GOTCHAS.md"],
+  "always_loaded": [
+    "CLAUDE.md",
+    ".claude/CLAUDE.md",
+    "AGENTS.md",
+    ".github/copilot-instructions.md"
+  ],
+  "routers": [
+    "*/AGENTS.md",
+    "*/*/AGENTS.md",
+    "*/CLAUDE.md",
+    "*/*/CLAUDE.md"
+  ],
+  "docs": [
+    "docs/features/*.md"
+  ],
+  "gotchas": [
+    "GOTCHAS.md",
+    "*/GOTCHAS.md",
+    "*/*/GOTCHAS.md"
+  ],
   "budgets": {
     "always_loaded": 9000,
     "router": 2000,
@@ -11,7 +27,13 @@
     "gotchas": 8000
   },
   "guard": {
-    "ignore": ["**/*.lock", "**/package-lock.json", "**/pnpm-lock.yaml", "openspec/**", "**/*.md"],
+    "ignore": [
+      "**/*.lock",
+      "**/package-lock.json",
+      "**/pnpm-lock.yaml",
+      "openspec/**",
+      "**/*.md"
+    ],
     "skip_marker": "[skip docs]"
   },
   "structural_factor": 1.25

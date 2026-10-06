@@ -187,6 +187,43 @@ class BudgetTests(Base):
         missing = self.p.measure()["tiers"]["always_loaded"]["missing_imports"]
         self.assertEqual(missing, [{"file": "AGENTS.md", "import": "gone.md"}])
 
+    def test_linked_worktrees_are_not_measured(self) -> None:
+        """A worktree's maps duplicate its main checkout's; a nested repo is real."""
+        self.p.write("Panel/.git/HEAD", "ref: refs/heads/main\n")
+        self.p.write("Panel/AGENTS.md", "x" * 100)
+        # linked worktrees: git writes `commondir` into the worktree's gitdir
+        self.p.write("Panel/.git/worktrees/Panel-wt-a/commondir", "../..\n")
+        self.p.write("Panel-wt-a/.git", "gitdir: ../Panel/.git/worktrees/Panel-wt-a\n")  # relative
+        self.p.write("Panel-wt-a/AGENTS.md", "x" * 100)
+        self.p.write("Panel/.git/worktrees/Panel-wt-b/commondir", "../..\n")
+        abs_gitdir = str(self.p.root / "Panel" / ".git" / "worktrees" / "Panel-wt-b")  # backslashes on Windows
+        self.p.write("Panel-wt-b/.git", f"gitdir: {abs_gitdir}\n")
+        self.p.write("Panel-wt-b/AGENTS.md", "x" * 100)
+        # a submodule, even one whose gitdir path contains /worktrees/: walked
+        self.p.write(".git/modules/Lib/HEAD", "x")
+        self.p.write("Lib/.git", "gitdir: ../.git/modules/Lib\n")
+        self.p.write("Lib/AGENTS.md", "x" * 100)
+        self.p.write("Panel/.git/worktrees/x/modules/Sub/HEAD", "x")
+        self.p.write("Sub/.git", "gitdir: ../Panel/.git/worktrees/x/modules/Sub\n")
+        self.p.write("Sub/AGENTS.md", "x" * 100)
+        routers = sorted(r["file"] for r in self.p.measure()["tiers"]["router"]["files"])
+        self.assertEqual(routers, ["Lib/AGENTS.md", "Panel/AGENTS.md", "Sub/AGENTS.md"])
+        found = layout.find_files(self.p.root, ["**/AGENTS.md"])
+        self.assertNotIn("Panel-wt-a/AGENTS.md", found)
+        self.assertNotIn("Panel-wt-b/AGENTS.md", found)
+
+    def test_dot_claude_claude_md_is_always_loaded(self) -> None:
+        """Claude Code loads .claude/CLAUDE.md at session start: not a router."""
+        self.p.write(".claude/CLAUDE.md", "x" * 400)
+        m = self.p.measure()
+        self.assertIn(".claude/CLAUDE.md", [f["file"] for f in m["tiers"]["always_loaded"]["files"]])
+        self.assertNotIn(".claude/CLAUDE.md", [f["file"] for f in m["tiers"]["router"]["files"]])
+
+    def test_nested_claude_md_is_a_router(self) -> None:
+        self.p.write("apps/web/CLAUDE.md", "x" * 12000)
+        over = [o["file"] for o in self.p.measure()["over"]]
+        self.assertIn("apps/web/CLAUDE.md", over)
+
     def test_monorepo_router_over_budget(self) -> None:
         self.p.write("AGENTS.md", "root\n")
         self.p.write("apps/web/AGENTS.md", "x" * 12000)

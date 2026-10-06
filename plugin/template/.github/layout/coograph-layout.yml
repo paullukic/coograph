@@ -13,13 +13,29 @@ on:
 jobs:
   layout:
     runs-on: ubuntu-latest
+    # The checker may be downloaded from coograph `main` (below): give the job
+    # nothing it could misuse.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+      # Projects that keep coograph tooling out of git (a global excludesfile)
+      # have no committed checker; fetch it. With no committed layout.json the
+      # built-in defaults apply.
+      - name: Fetch the checker when it is not committed
+        run: |
+          if [ ! -f .github/layout/layout.py ]; then
+            mkdir -p .github/layout
+            curl -fsSL https://raw.githubusercontent.com/paullukic/coograph/main/.github/layout/layout.py \
+              -o .github/layout/layout.py
+            sha256sum .github/layout/layout.py
+          fi
       - name: Instruction budget
         run: python .github/layout/layout.py --budget
       - name: Docs guard

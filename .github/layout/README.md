@@ -30,8 +30,8 @@ overwritten; new seed keys are added without touching existing values.
 
 ```json
 {
-  "always_loaded": ["CLAUDE.md", "AGENTS.md", ".github/copilot-instructions.md"],
-  "routers": ["*/AGENTS.md", "*/*/AGENTS.md"],
+  "always_loaded": ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md", ".github/copilot-instructions.md"],
+  "routers": ["*/AGENTS.md", "*/*/AGENTS.md", "*/CLAUDE.md", "*/*/CLAUDE.md"],
   "docs": ["docs/features/*.md"],
   "gotchas": ["GOTCHAS.md", "*/GOTCHAS.md", "*/*/GOTCHAS.md"],
   "budgets": {"always_loaded": 9000, "router": 2000, "doc": 8000, "gotchas": 8000},
@@ -42,6 +42,13 @@ overwritten; new seed keys are added without touching existing values.
 
 Optional, not in the seed: `"guard": {"roots": ["apps/web/src/", "packages/core/src/"], ...}`
 (see `--guard` below).
+
+Nested `CLAUDE.md` files count as routers: Claude Code loads one when the
+agent enters its folder, the same moment as the folder's `AGENTS.md`. A
+project whose `layout.json` predates this keeps its own `routers` list; add
+`"*/CLAUDE.md", "*/*/CLAUDE.md"` to it. Linked git worktrees (a `.git` file
+pointing into another repo's `worktrees/`) are never walked: their files
+duplicate the main checkout's.
 
 Globs are anchored at the repo root: `**` crosses directories, `*` and `?` do
 not. In a doc's or gotcha's `paths:`, a pattern without `/` also matches a file
@@ -132,5 +139,8 @@ is checked, as before.
   `--guard` on every pull request, and again when the PR title is edited (so
   adding the skip marker takes effect). Sync refreshes it only while its first
   line carries `coograph:managed`; delete that line to keep your own edits.
+  When the repo keeps coograph tooling out of git (a global excludesfile), the
+  workflow downloads `layout.py` from coograph `main`; with no committed
+  `layout.json` the built-in defaults apply.
 - `pre-commit` goes to `.git/hooks/` and runs `--budget`. Bypass once with
   `git commit --no-verify`.
