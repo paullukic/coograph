@@ -43,12 +43,14 @@ EM_DASH = "—"
 SKIP_DIRS = {"node_modules", "__pycache__", ".code-graph", "tests"}
 SKIP_SUFFIXES = {".bak", ".pyc", ".db"}
 
-# Interpreter `uv run` is pinned to. Without it uv resolves against the machine's
-# default Python, and on a default older than 3.10 the graph build dies with
-# "your requirements are unsatisfiable" (mcp requires 3.10+). uv downloads a
-# managed interpreter on demand, so this needs nothing installed. Keep in step
-# with the pin in .mcp.json and in coograph-init's SKILL.md.
-UV_PYTHON = "3.12"
+# Interpreter constraint for `uv run`. Without one uv resolves against the
+# machine's default Python, and on a default older than 3.10 the graph build
+# dies with "your requirements are unsatisfiable" (mcp requires 3.10+). A range,
+# not an exact version: UV_PINNED_ENV below restricts uv to system Pythons, and
+# an exact "3.12" then fails on any machine whose system Python is another
+# 3.1x ("Python downloads are set to 'never'"). Keep in step with .mcp.json and
+# coograph-init's SKILL.md.
+UV_PYTHON = ">=3.10"
 
 # Never overwrite these - user has customized them during initialization.
 # rules.json is the per-project Retro registry: local edits, thresholds and
@@ -110,6 +112,80 @@ def _find_uv() -> Path | None:
         return Path(uv)
     candidate = Path.home() / ".local" / "bin" / "uv"
     return candidate if candidate.exists() else None
+
+
+# uv normally builds its run environment on a uv-managed or per-user Python
+# download. On locked-down Windows those builds can ship an _overlapped.pyd
+# that Application Control blocks, and `import mcp.server.fastmcp` dies with
+# it at server start. Pinning uv to system-only Python makes uv build its
+# env on a system install, whose stdlib DLLs are trusted; "never" also
+# stops silent downloads that would reintroduce the problem.
+UV_PINNED_ENV = {"UV_NO_MANAGED_PYTHON": "1", "UV_PYTHON_DOWNLOADS": "never"}
+
+
+def _graph_launcher(project_path: Path, server: Path, reqs: Path):
+    """Resolve (command, child env, label) for launching server.py here.
+
+    Priority: project venv -> uv with pinned env (system Python only) ->
+    plain python. Paths are absolute; child env is None when nothing needs
+    pinning, and callers pass it straight to subprocess.run(env=...).
+    """
+    venv_py = next(
+        (p for p in (project_path / ".code-graph" / "venv" / "Scripts" / "python.exe",
+                     project_path / ".code-graph" / "venv" / "bin" / "python")
+         if p.exists()),
+        None,
+    )
+    if venv_py:
+        return [str(venv_py), str(server)], None, "venv (trusted stdlib)"
+    uv = _find_uv()
+    if uv and reqs.exists():
+        child_env = dict(os.environ)
+        child_env.update(UV_PINNED_ENV)
+        return ([str(uv), "run", "-p", UV_PYTHON, "--with-requirements", str(reqs), str(server)],
+                child_env, "uv + tree-sitter (system Python only)")
+    return [sys.executable, str(server)], None, "python fallback"
+
+
+def _write_opencode_config(path: Path, prefix: str, dry_run: bool = False) -> int:
+    """Create the per-project opencode.json (OpenCode's equivalent of .mcp.json).
+
+    OpenCode reads neither .mcp.json nor .github/skills/ automatically:
+    project-root opencode.json carries both the skills.paths pointer and the
+    code-graph MCP entry, or an OpenCode-only install silently gets neither.
+    Written only when missing - the file may hold per-machine provider and
+    plugin settings and sync must never rewrite it. WSL paths are skipped:
+    OpenCode running inside WSL wants a hand-written file with native paths.
+    """
+    if _is_wsl_path(path):
+        return 0
+    server = path / ".github" / "code-graph" / "server.py"
+    reqs = path / ".github" / "code-graph" / "requirements.txt"
+    cmd, child_env, label = _graph_launcher(path, server, reqs)
+    if cmd[0] == sys.executable:
+        cmd[0] = "python"  # PATH lookup, not this sync run's interpreter
+    if child_env is not None:
+        child_env = {k: v for k, v in child_env.items() if k in UV_PINNED_ENV}
+    entry = {"type": "local", "command": cmd, "cwd": ".", "enabled": True,
+             "timeout": 120000}
+    if child_env:
+        entry["environment"] = child_env
+    config = {
+        "$schema": "https://opencode.ai/config.json",
+        "skills": {"paths": [".github/skills"]},
+        "mcp": {"code-graph": entry},
+    }
+    if dry_run:
+        log.info("  %sopencode.json  would create (launcher: %s)", prefix, label)
+        return 0
+    try:
+        (path / "opencode.json").write_text(
+            json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    except OSError as e:
+        log.warning("  opencode.json not written: %s", e)
+        return 0
+    log.info("  %sopencode.json  1 file (launcher: %s)", prefix, label)
+    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -789,6 +865,38 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
         log.warning("  code_graph is false but %s has .github/code-graph/ "
                      "- set code_graph: true in projects.json to sync updates", path)
 
+    # OpenCode (sst/opencode): per-project opencode.json (code-graph MCP +
+    # skills pointer), the slash-command mirrors, and the bash-audit plugin.
+    # OpenCode consumes none of the files the blocks above place: it reads no
+    # .mcp.json and scans neither .github/skills/ nor .claude/skills/.
+    if "opencode" in tools:
+        # OpenCode reads AGENTS.md natively; create it when missing, never overwrite.
+        total += _sync_agents_md(path, prefix, dry_run=dry_run)
+        if code_graph and not (path / "opencode.json").exists():
+            total += _write_opencode_config(path, prefix, dry_run=dry_run)
+
+        # Native slash commands (coograph-init, coograph-retro, the two
+        # multi-model ones), mirrored from the template root like
+        # .claude/commands/ above.
+        cmds_src = TEMPLATE_ROOT / ".opencode" / "commands"
+        if cmds_src.exists():
+            cmds_dst = path / ".opencode" / "commands"
+            n = 0
+            for item in cmds_src.glob("coograph-*.md"):
+                state.write_managed(item, cmds_dst / item.name)
+                n += 1
+            if n:
+                log.info("  %s.opencode/commands/coograph-*.md  %d files", prefix, n)
+                total += n
+
+        # Bash audit-log plugin (same evidence stream as the Claude hook).
+        audit_src = TEMPLATE_ROOT / ".opencode" / "plugin" / "log-bash.ts"
+        if audit_src.exists():
+            audit_dst = path / ".opencode" / "plugin" / "log-bash.ts"
+            state.write_managed(audit_src, audit_dst)
+            log.info("  %s.opencode/plugin/log-bash.ts  1 file", prefix)
+            total += 1
+
     # Remove paths that previous template versions placed but have since
     # been renamed / removed. See OBSOLETE_PATHS at the top of the module.
     obsolete = _cleanup_obsolete(path, dry_run=dry_run)
@@ -845,7 +953,6 @@ def _wsl_distro(path: Path) -> str:
 
 
 def _rebuild_graph(project_path: Path) -> None:
-    uv = _find_uv()
     server = project_path / ".github" / "code-graph" / "server.py"
     reqs = project_path / ".github" / "code-graph" / "requirements.txt"
 
@@ -881,16 +988,11 @@ def _rebuild_graph(project_path: Path) -> None:
                     log.info("%s generated in %.2fs", label, elapsed)
         return
 
-    if uv and reqs.exists():
-        cmd_base = [str(uv), "run", "-p", UV_PYTHON,
-                    "--with-requirements", str(reqs), str(server)]
-        log.info("BUILD graph (uv + tree-sitter, python %s)...", UV_PYTHON)
-    else:
-        cmd_base = [sys.executable, str(server)]
-        log.info("BUILD graph (python fallback)...")
+    cmd_base, child_env, label = _graph_launcher(project_path, server, reqs)
+    log.info("BUILD graph (%s)...", label)
 
     t0 = time.perf_counter()
-    result = subprocess.run(cmd_base + ["--build"], cwd=project_path, capture_output=True, text=True)
+    result = subprocess.run(cmd_base + ["--build"], cwd=project_path, capture_output=True, text=True, env=child_env)
     elapsed = time.perf_counter() - t0
 
     if result.returncode != 0:
@@ -902,7 +1004,7 @@ def _rebuild_graph(project_path: Path) -> None:
     log.info("graph.db built: %s in %.2fs", size, elapsed)
 
     t0 = time.perf_counter()
-    result = subprocess.run(cmd_base + ["--visualize"], cwd=project_path, capture_output=True, text=True)
+    result = subprocess.run(cmd_base + ["--visualize"], cwd=project_path, capture_output=True, text=True, env=child_env)
     elapsed = time.perf_counter() - t0
 
     if result.returncode != 0:

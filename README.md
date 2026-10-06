@@ -47,7 +47,7 @@ Trigger the initializer in your AI tool's chat. Each tool has its own invocation
 | **Claude Code** | `/coograph-init` | `.claude/commands/coograph-init.md` |
 | **VS Code Copilot** | `/coograph-init` | `.github/skills/coograph-init/` skill folder |
 | **Codex CLI** | `$coograph-init` (explicit skill) **or** "initialize the project" (auto-trigger) — see [Codex CLI Notes](#codex-cli-notes) | `.agents/skills/coograph-init/SKILL.md` (Codex scans repo root). Codex reserves `/` for built-ins, so custom workflows use `$name` |
-| **OpenCode** | `/coograph-init` | `.opencode/commands/coograph-init.md` |
+| **OpenCode** | `/coograph-init` | `.opencode/commands/coograph-*.md` (all four) + `opencode.json` (when code-graph is enabled — registers the code-graph MCP server and the skills paths; OpenCode reads neither `.mcp.json` nor `.github/skills/` on its own) |
 | **Cursor** | `/coograph-init` (string match — no autocomplete) | `.cursor/rules/coograph.mdc` § Invocation |
 | **Devin Desktop** | `/coograph-init` (string match) | `.windsurfrules` § Invocation. Renamed from Windsurf on 2026-06-02; the legacy file at the workspace root is [still read](https://docs.devin.ai/desktop/devin-desktop-faq), though `.devin/rules/` now takes precedence |
 | **Aider** | `/coograph-init` (string match) | `CONVENTIONS.md` § Invocation |
@@ -217,7 +217,7 @@ Eight tools, three of them have hook APIs we can use:
 |---|---|---|
 | **Claude Code** | ✅ shipped | `.claude/hooks/log-bash.py` wired via `.claude/settings.json` PreToolUse Bash hook. |
 | **Codex CLI** | ✅ shipped | `.codex/hooks/log-bash.py` — same script shape. Wire it once per machine in `~/.codex/config.toml` (see [setup](#codex-cli-audit-setup) below). Codex passes the same `tool_name` / `tool_input.command` / `session_id` / `cwd` payload shape so the script Just Works. |
-| **OpenCode** | ✅ shipped | `.opencode/plugin/log-bash.ts` — uses OpenCode's `tool.execute.before` plugin event. Loaded automatically by OpenCode at session start. |
+| **OpenCode** | ✅ shipped | `.opencode/plugin/log-bash.ts` — uses OpenCode's `tool.execute.before` plugin event. Loaded automatically by OpenCode at session start (copied into each registered project's `.opencode/plugin/` by `sync.py` and by `/coograph-init`). |
 | **VS Code Copilot** | ⛔ no hook API | Copilot Chat does not expose a pre-tool-use hook in any public API as of 2026-05. Commands run inside the VS Code process with no interception point. Falls back to VS Code's own command history if you need a trail. |
 | **Cursor** | ⛔ no hook API | Rules files only; no pre-tool-use hook surface. Use Cursor's terminal history. |
 | **Devin Desktop** | ⛔ no hook API | Same — rules-only, no hook system exposed. |

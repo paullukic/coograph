@@ -729,6 +729,38 @@ class SyncTests(Base):
         self.sync.sync_project(self._project(tools=["claude"]))
         self.assertEqual((self.p.root / "AGENTS.md").read_text(encoding="utf-8"), "MINE\n")
 
+    def test_opencode_project_gets_agents_md_and_commands(self) -> None:
+        """OpenCode reads AGENTS.md natively; sync creates it when missing."""
+        self.sync.sync_project(self._project(tools=["opencode"]))
+        self.assertEqual((self.p.root / "AGENTS.md").read_bytes(), (REPO / "AGENTS.md").read_bytes())
+        self.assertTrue(list((self.p.root / ".opencode" / "commands").glob("coograph-*.md")))
+        self.assertFalse((self.p.root / "opencode.json").exists())  # code_graph is false
+
+    def test_opencode_keeps_existing_agents_md_and_config(self) -> None:
+        self.p.write("AGENTS.md", "MINE\n")
+        self.p.write("opencode.json", '{"provider": "mine"}\n')
+        self.sync.sync_project(self._project(tools=["opencode"]))
+        self.assertEqual((self.p.root / "AGENTS.md").read_text(encoding="utf-8"), "MINE\n")
+        self.assertEqual((self.p.root / "opencode.json").read_text(encoding="utf-8"), '{"provider": "mine"}\n')
+
+    def test_opencode_config_uses_interpreter_range(self) -> None:
+        """An exact version under the system-only pins fails on other 3.1x systems."""
+        self.p.write(".github/code-graph/requirements.txt", "mcp\n")
+        self.p.write(".github/code-graph/server.py", "")
+        if self.sync._find_uv() is None:
+            self.skipTest("uv not installed")
+        self.assertEqual(self.sync._write_opencode_config(self.p.root, ""), 1)
+        cfg = json.loads((self.p.root / "opencode.json").read_text(encoding="utf-8"))
+        cmd = cfg["mcp"]["code-graph"]["command"]
+        self.assertEqual(cmd[cmd.index("-p") + 1], ">=3.10")
+        self.assertEqual(cfg["mcp"]["code-graph"]["environment"],
+                         {"UV_NO_MANAGED_PYTHON": "1", "UV_PYTHON_DOWNLOADS": "never"})
+
+    def test_template_mcp_json_uses_interpreter_range(self) -> None:
+        entry = json.loads((REPO / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["code-graph"]
+        self.assertEqual(entry["args"][entry["args"].index("-p") + 1], ">=3.10")
+        self.assertEqual(self.sync.UV_PYTHON, ">=3.10")
+
     def test_dry_run_writes_nothing_project_owned(self) -> None:
         self.p.write(".github/workflows/coograph-layout.yml", "old\n")
         self.sync.sync_project(self._project(), dry_run=True)

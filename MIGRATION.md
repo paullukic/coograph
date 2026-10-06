@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-10-06: OpenCode channel + Application-Control-safe code-graph launcher (plugin 1.8.4)
+
+Two changes, both automatic for **registered** projects on the next `git pull` of coograph:
+
+1. `sync.py` now picks the code-graph launcher per machine — an existing `.code-graph/venv` if present, else `uv` pinned to system-only Python (`UV_NO_MANAGED_PYTHON=1`, `UV_PYTHON_DOWNLOADS=never`), else plain `python`. On Windows machines whose Smart App Control / Defender Application Control policy blocks the `_overlapped.pyd` of uv-managed and per-user Python builds, every unpinned `uv run` silently died at `import mcp.server.fastmcp` — the graph stayed empty and the MCP server never answered. The pins are baked into the copied `.mcp.json` and into generated `opencode.json` files, and used for the on-pull rebuild.
+2. `sync.py` gained an OpenCode tool block: a registered project whose `projects.json` `tools` list includes `"opencode"` receives the four `.opencode/commands/coograph-*.md`, `.opencode/plugin/log-bash.ts`, and — with `code_graph: true` — a generated `opencode.json` (`skills.paths` + the `mcp.code-graph` entry). `opencode.json` is only created when missing; existing files are never rewritten.
+
+Manual steps:
+
+1. In `projects.json` (coograph root, machine-local), add `"opencode"` to the project's `tools` list — or re-run `/coograph-init` and select OpenCode.
+2. Projects that already hand-wrote an `opencode.json`: merge `"skills": {"paths": [".github/skills"]}` and the `mcp.code-graph` key in by hand, and on uv-pinned Windows add `"environment": {"UV_NO_MANAGED_PYTHON": "1", "UV_PYTHON_DOWNLOADS": "never"}` plus `timeout: 120000` (the 5-second default is too short for `build_graph`).
+3. Restart the tools — OpenCode reads `opencode.json` and `.opencode/plugin/` only at session start; Claude Code likewise reads `.mcp.json` only at startup.
+
+**Interpreter constraint is now a range.** `.mcp.json`, the on-pull rebuild and the generated configs use `uv run -p ">=3.10"` instead of `-p 3.12`. With the system-only pins above, an exact `3.12` fails on any machine whose system Python is another 3.1x (uv: "Python downloads are set to 'never'"). A hand-written MCP config that still says `-p 3.12` next to those pins needs the same change.
+
+---
+
 ## 2026-10-06: File-neutral OpenSpec-gate warning (plugin 1.8.3)
 
 `openspec-gate-warn.py` said "CLAUDE.md OPENSPEC OR STOP". Since the tiered template the rule lives in `AGENTS.md`, so a restructured project reworded it locally, and sync then kept the hook as a local edit, cut off from upstream fixes. The message now reads "Hard rule OPENSPEC OR STOP". Nothing to do: a project whose copy matches any earlier upstream version is updated on the next sync. A project that reworded it locally can take `.coograph/upstream/.claude/hooks/openspec-gate-warn.py`.

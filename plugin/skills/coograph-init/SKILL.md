@@ -31,7 +31,7 @@ Ask the user these questions one at a time (wait for each answer before proceedi
    - **Claude Code**: `CLAUDE.md` + `AGENTS.md`, `.claude/commands/`, `.claude/hooks/`, `.claude/settings.json`
    - **VS Code Copilot** — `.github/agents/`, `.github/skills/`, `AGENTS.md`
    - **Codex CLI** — `.agents/skills/coograph-init/SKILL.md` + `AGENTS.md` (Codex scans `.agents/skills/` from repo root for native slash)
-   - **OpenCode** (sst/opencode) — `.opencode/commands/coograph-init.md` + `AGENTS.md` (native `/coograph-init` slash)
+   - **OpenCode** (sst/opencode) — `.opencode/commands/coograph-*.md` + `AGENTS.md` + `opencode.json` (native `/coograph-init` slash; `opencode.json` carries the skills pointer and, when question 5 is `yes`, the code-graph MCP entry — OpenCode's equivalent of `.mcp.json`)
    - **Cursor** — `.cursor/rules/coograph.mdc` (from `templates/cursor/`)
    - **Devin Desktop** — `.windsurfrules` (from `templates/windsurf/`)
    - **Aider** — `CONVENTIONS.md` (from `templates/aider/`)
@@ -180,9 +180,10 @@ Copy files from the template root (see Template source) to the target project. O
 - (delegates to `.github/skills/coograph-init/` — already supplied by the always-copy block)
 
 **For OpenCode:**
-- `.opencode/commands/coograph-init.md` (registers `/coograph-init` slash in OpenCode — note the plural `commands/`)
-- `.opencode/commands/coograph-retro.md` (registers `/coograph-retro`)
+- `.opencode/commands/coograph-*.md` (all four command files — `coograph-init`, `coograph-retro`, `coograph-suggest-multi-models`, `coograph-disable-multi-models`; note the plural `commands/`)
+- `.opencode/plugin/log-bash.ts` → target project's `.opencode/plugin/` (bash audit plugin — OpenCode auto-loads `plugin/*.ts` at session start)
 - `AGENTS.md` (auto-read by OpenCode; same file as VS Code Copilot — copy once)
+- `opencode.json` at the workspace root, when code-graph was enabled (question 5) — written per Step 6e; this file alone registers the code-graph MCP server and the `.github/skills/` paths (OpenCode reads neither `.mcp.json` nor `.github/skills/` on its own)
 - (delegates to `.github/skills/coograph-init/` — already supplied by the always-copy block)
 
 **For Cursor:**
@@ -338,11 +339,14 @@ python --version
 ```
 
 If it is below 3.10, every `uv run` invocation this procedure writes or runs — the MCP
-configs in 6e, the git hooks in 6h, and the build command in 6f — must carry an explicit
-`-p <version>` pin immediately after `run` (`uv` downloads a managed interpreter on
-demand, so no manual install is needed):
+configs in 6e, the git hooks in 6h, and the build command in 6f — must carry the
+interpreter constraint `-p ">=3.10"` immediately after `run`. Use the range, never an
+exact version: with the system-only pins from 6e (`UV_NO_MANAGED_PYTHON`,
+`UV_PYTHON_DOWNLOADS=never`), an exact `-p 3.12` fails on every machine whose system
+Python is another 3.1x. Without those pins, uv downloads a managed interpreter when no
+installed one satisfies the range:
 ```bash
-uv run -p 3.12 --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py --build
+uv run -p ">=3.10" --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py --build
 ```
 Report the pin to the user, since it has to stay in the committed config.
 
@@ -355,8 +359,9 @@ The graph database is local/generated — it must not be committed.
 ### 6e. Write MCP config(s) based on AI tools chosen in Step 1
 
 By this point `uv` should be installed (step 6c). If step 6c fell back to pip, use `"command": "python"` and `"args": ["${workspaceFolder}/.github/code-graph/server.py"]` in all configs below instead of the `uv` variant.
+If the server instead dies with `DLL load failed while importing _overlapped` (Windows Smart App Control blocks the uv-managed Python build), create a system-Python venv — `python -m venv .code-graph/venv` then `pip install -r .github/code-graph/requirements.txt` — and point the command at its interpreter, **or** keep `uv` and add `"env": {"UV_NO_MANAGED_PYTHON": "1", "UV_PYTHON_DOWNLOADS": "never"}` (`"environment"` in `opencode.json`) to pin uv onto a system Python install.
 
-The configs below carry the `-p 3.12` interpreter pin from step 6c. Drop it only when the machine's default `python` is already 3.10 or newer; keeping it is harmless either way.
+The configs below carry the `-p ">=3.10"` interpreter constraint from step 6c. Drop it only when the machine's default `python` is already 3.10 or newer; keeping it is harmless either way.
 
 **VS Code Copilot** → create or merge into `.vscode/mcp.json`:
 ```json
@@ -365,7 +370,7 @@ The configs below carry the `-p 3.12` interpreter pin from step 6c. Drop it only
     "code-graph": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "-p", "3.12", "--with-requirements", "${workspaceFolder}/.github/code-graph/requirements.txt", "${workspaceFolder}/.github/code-graph/server.py"]
+      "args": ["run", "-p", ">=3.10", "--with-requirements", "${workspaceFolder}/.github/code-graph/requirements.txt", "${workspaceFolder}/.github/code-graph/server.py"]
     }
   }
 }
@@ -378,7 +383,7 @@ The configs below carry the `-p 3.12` interpreter pin from step 6c. Drop it only
     "code-graph": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "-p", "3.12", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"]
+      "args": ["run", "-p", ">=3.10", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"]
     }
   }
 }
@@ -391,14 +396,33 @@ The configs below carry the `-p 3.12` interpreter pin from step 6c. Drop it only
     "code-graph": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "-p", "3.12", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"]
+      "args": ["run", "-p", ">=3.10", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"]
     }
   }
 }
 ```
 
+**OpenCode** → create or merge `opencode.json` in the **workspace root** (OpenCode reads neither `.mcp.json` nor `.github/skills/` on its own):
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "skills": { "paths": [".github/skills"] },
+  "mcp": {
+    "code-graph": {
+      "type": "local",
+      "command": ["uv", "run", "--with-requirements", ".github/code-graph/requirements.txt", ".github/code-graph/server.py"],
+      "cwd": ".",
+      "enabled": true,
+      "timeout": 120000,
+      "environment": { "UV_NO_MANAGED_PYTHON": "1", "UV_PYTHON_DOWNLOADS": "never" }
+    }
+  }
+}
+```
+(If uv was skipped, `"command"` is the plain string `"python"` with `"args": [".github/code-graph/requirements.txt", ".github/code-graph/server.py"]`.)
+
 If `Both` was selected in Step 1, write all applicable configs.
-Do NOT overwrite existing MCP configs — merge the `code-graph` key into the `servers`/`mcpServers` object and leave every other key alone. `sync.py` follows the same rule on later pulls, so a hand-edited config survives.
+Do NOT overwrite existing MCP configs: merge the `code-graph` key into the `servers`/`mcpServers`/`mcp` object (and `"skills": {"paths": [".github/skills"]}` into `opencode.json`), and leave every other key alone. `sync.py` follows the same rule on later pulls, so a hand-edited config survives.
 
 ### 6f. Build the initial graph
 
