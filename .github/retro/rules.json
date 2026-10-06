@@ -28,7 +28,8 @@
       "detector": "openspec-gate",
       "added": "2026-09-19",
       "last_triggered": null,
-      "last_changed": "2026-09-25"
+      "last_changed": "2026-09-25",
+      "outcomes_since": "2026-10-06"
     },
     {
       "id": "scope",
@@ -42,7 +43,8 @@
       "detector": "scope-warning",
       "added": "2026-09-19",
       "last_triggered": null,
-      "last_changed": "2026-09-25"
+      "last_changed": "2026-09-25",
+      "outcomes_since": "2026-10-06"
     },
     {
       "id": "generated-files",
@@ -70,7 +72,8 @@
       "detector": "new-dependency",
       "added": "2026-09-19",
       "last_triggered": null,
-      "last_changed": "2026-09-25"
+      "last_changed": "2026-09-25",
+      "outcomes_since": "2026-10-06"
     },
     {
       "id": "preserve-features",
@@ -112,7 +115,8 @@
       "detector": "defect",
       "added": "2026-09-20",
       "last_triggered": null,
-      "last_changed": "2026-09-25"
+      "last_changed": "2026-09-25",
+      "outcomes_since": "2026-10-06"
     }
   ],
   "thresholds": {

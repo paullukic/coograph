@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-10-06: Warn hooks the model can see (plugin 1.8.1)
+
+`warn-scope.py`, `openspec-gate-warn.py`, `no-new-deps-warn.py` and `defect-warn.py` used to warn by printing to stderr and exiting 1. Claude Code never shows that text to the model, so since they shipped they warned only the user's log, not the agent. They now speak through `hookSpecificOutput.additionalContext` (the model) and `systemMessage` (the terminal) and exit 0. Registered projects get the new hooks on the next `git pull` of coograph.
+
+**Update the installed plugin too** (marketplace Update to 1.8.1). When a project's hooks and the plugin's hooks are both wired, whichever copy claims the event first answers it; an old plugin copy still warns through stderr, and the model never sees it. The 2026-10-06 verification probe hit exactly this: the plugin copy won, and the agent saw nothing until the plugin was kept out.
+
+Retro now counts a rule's outcomes only from its `outcomes_since` date on. That is a new, optional rule field: the last change to the hook's behaviour. `last_changed` still marks any edit and no longer touches outcome evidence. The seed sets `outcomes_since` on `scope`, `openspec-gate`, `no-new-deps` and `defect`, but `rules.json` is yours and is never overwritten, and no retro sets it for you. **Add `"outcomes_since": "<YYYY-MM-DD>"` to those four rules in `.github/retro/rules.json` by hand, using the date this project had both the new hooks and the updated plugin.** Not 2026-10-06: until both are updated here, the old hooks keep warning invisibly. Until you do, retro still weighs outcomes from warnings the agent never saw, and a rule could be proposed for `hook-block` on that false evidence.
+
+---
+
 ## 2026-10-06: Instruction budget by tier (plugin 1.8.0, issue #43)
 
 New: `.github/layout/` (`layout.py`, `layout.seed.json`, README, an opt-in CI workflow and pre-commit hook), `GOTCHAS.md`, `.claude/hooks/gotcha-surface.py`, the `/coograph-docs-restructure` skill, and a restructured template: hard rules and workflow live once in `AGENTS.md`, code conventions in `.github/copilot-instructions.md`, and `CLAUDE.md` imports both with `@`.

@@ -21,7 +21,7 @@ Two properties are deliberate:
    whose rules have no transcript detector and therefore emit their own
    violation as well.
 
-Never blocks - exits 1 so the warning surfaces without stopping the command, and
+Never blocks: warns the model through additionalContext with exit 0, and
 at most once per session. If `.coograph/` is unwritable the marker cannot be
 written, so the warning degrades to once per install rather than once per
 session.
@@ -35,10 +35,20 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True  # keep __pycache__/ out of .claude/hooks/
 try:
-    from _coograph_guard import should_skip
+    from _coograph_guard import should_skip, warn_model
 except ImportError:  # guard not copied next to this hook: run unguarded
     def should_skip(payload: dict, hook_file: str) -> bool:
         return False
+
+    def warn_model(payload: dict, text: str) -> None:
+        # Same JSON as _coograph_guard.warn_model: stderr with exit 1 never
+        # reaches the model, additionalContext does.
+        try:
+            print(json.dumps({"systemMessage": text, "hookSpecificOutput": {
+                "hookEventName": str(payload.get("hook_event_name") or "PreToolUse"),
+                "additionalContext": text}}))
+        except Exception:
+            pass
 try:
     import _coograph_signals as signals  # shim in this directory -> .github/retro/
 except ImportError:  # without the shared module there is no detector to agree with
@@ -98,14 +108,13 @@ def main() -> int:
         _decide(cwd, payload, "suppressed", target)
         return 0
 
-    print(
+    warn_model(payload, (
         f"[no-new-deps] adding a dependency ({subject}). This project's rules require "
-        f"explicit user approval before a new dependency lands - confirm before continuing.",
-        file=sys.stderr,
-    )
+        f"explicit user approval before a new dependency lands - confirm before continuing."
+    ))
     _touch(_marker(cwd, sid))
     _decide(cwd, payload, "warned", target)
-    return 1
+    return 0
 
 
 def _decide(cwd: Path, payload: dict, action: str, path: str) -> None:
