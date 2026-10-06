@@ -4,12 +4,22 @@
 Run from the coograph root (executed automatically by post-merge hook).
 Reads projects.json, copies pure-template files to each registered project,
 and rebuilds the code-graph + visualizer for projects with code_graph: true.
+
+A template-managed file is overwritten only when the project has not edited
+it (see _write_managed): a locally edited file is kept, the upstream version
+goes to .coograph/upstream/<path>, and sync logs one KEPT line per file.
+
+    python3 .github/sync.py                    # every registered project
+    python3 .github/sync.py --dry-run          # decide and log, write nothing
+    python3 .github/sync.py --project PATH     # one registered project
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -17,9 +27,15 @@ import sys
 import time
 from pathlib import Path
 
-TEMPLATE_ROOT = Path(__file__).parent.parent  # .github/sync.py -> root
+TEMPLATE_ROOT = Path(__file__).resolve().parent.parent  # .github/sync.py -> root
 PROJECTS_FILE = TEMPLATE_ROOT / "projects.json"
 LOG_FILE = Path(__file__).parent / "sync.log"
+
+# Per project, under the gitignored local state directory: the hash of every
+# file as sync last left it, and the upstream copy of every file sync kept.
+MANIFEST_REL = Path(".coograph") / "sync-manifest.json"
+UPSTREAM_REL = Path(".coograph") / "upstream"
+EM_DASH = "—"
 
 # Skip these when recursively copying directories. "tests" is here for
 # .github/retro/tests/ (unit tests stay in the coograph repo); no other
@@ -96,10 +112,262 @@ def _find_uv() -> Path | None:
     return candidate if candidate.exists() else None
 
 
-def _copy_dir(src: Path, dst: Path, dry_run: bool = False) -> int:
-    """Recursively copy src to dst, skipping excluded items. Returns file count."""
-    if not dry_run:
-        dst.mkdir(parents=True, exist_ok=True)
+# ---------------------------------------------------------------------------
+# Local-edit protection
+# ---------------------------------------------------------------------------
+
+def _digest(data: bytes) -> str:
+    """sha256 after CRLF -> LF, so an autocrlf checkout is not an edit."""
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def _render(data: bytes, em_dash: str) -> bytes:
+    """What sync writes for a template file, given the project's setting."""
+    if em_dash != "hyphen":
+        return data
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data  # binary: never rewritten
+    if EM_DASH not in text:
+        return data
+    return text.replace(EM_DASH, "-").encode("utf-8")
+
+
+_SYNC_BLOCK_RE = re.compile(r"^sync:\s*(#.*)?$")
+_EM_DASH_RE = re.compile(r"^\s+em_dash:\s*([A-Za-z]+)\s*(#.*)?$")
+
+
+def _project_em_dash(path: Path) -> str:
+    """`sync: em_dash:` from the project's openspec/config.yaml: keep | hyphen.
+
+    A line regex, not a YAML parser (stdlib only): the key must sit indented
+    under a top-level `sync:` line. Anything unknown means `keep`.
+    """
+    try:
+        lines = (path / "openspec" / "config.yaml").read_text(
+            encoding="utf-8-sig", errors="replace").splitlines()
+    except OSError:
+        return "keep"
+    in_block = False
+    for line in lines:
+        if _SYNC_BLOCK_RE.match(line):
+            in_block = True
+            continue
+        if in_block:
+            if line.strip() == "" or line.lstrip().startswith("#"):
+                continue
+            if not line[:1].isspace():
+                break  # next top-level key
+            m = _EM_DASH_RE.match(line)
+            if m:
+                return "hyphen" if m.group(1).lower() == "hyphen" else "keep"
+    return "keep"
+
+
+class _History:
+    """Every earlier version of each template file, from the coograph git history.
+
+    Lets a project file that equals an upstream version ever shipped count as
+    untouched (only outdated) even with no manifest entry. Read once per run,
+    lazily, with one `git log` and one `git cat-file --batch`. No git, or no
+    history: empty, and sync falls back to the manifest (keeps more, loses none).
+    """
+
+    ROOTS = (".github", ".claude", ".mcp.json")
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self._blobs: dict[str, set[str]] | None = None
+        self._content: dict[str, bytes] = {}
+        self._digests: dict[tuple[str, str], set[str]] = {}
+
+    def _load(self) -> dict[str, set[str]]:
+        if self._blobs is not None:
+            return self._blobs
+        self._blobs = {}
+        try:
+            out = subprocess.run(
+                ["git", "-C", str(self.root), "log", "--raw", "--no-abbrev", "--no-renames",
+                 "--format=", "--", *self.ROOTS],
+                capture_output=True, timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return self._blobs
+        if out.returncode != 0:
+            return self._blobs
+        for line in out.stdout.decode("utf-8", "replace").splitlines():
+            # :100644 100644 <old> <new> M\t<path>
+            if not line.startswith(":") or "\t" not in line:
+                continue
+            meta, rel = line.split("\t", 1)
+            parts = meta.split()
+            if len(parts) < 4:
+                continue
+            for blob in (parts[2], parts[3]):
+                if blob.strip("0"):
+                    self._blobs.setdefault(rel, set()).add(blob)
+        wanted = sorted({b for blobs in self._blobs.values() for b in blobs})
+        if wanted:
+            self._content = self._cat(wanted)
+        return self._blobs
+
+    def _cat(self, blobs: list[str]) -> dict[str, bytes]:
+        try:
+            out = subprocess.run(
+                ["git", "-C", str(self.root), "cat-file", "--batch"],
+                input=("\n".join(blobs) + "\n").encode(), capture_output=True, timeout=120,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return {}
+        if out.returncode != 0:
+            return {}
+        data, pos, found = out.stdout, 0, {}
+        while pos < len(data):
+            end = data.find(b"\n", pos)
+            if end < 0:
+                break
+            header = data[pos:end].split()
+            pos = end + 1
+            if len(header) != 3:
+                continue  # "<sha> missing": no body follows
+            try:
+                size = int(header[2])
+            except ValueError:
+                break  # out of step with the stream: keep what was read
+            if header[1] == b"blob":
+                found[header[0].decode()] = data[pos:pos + size]
+            pos += size + 1  # skip the body of any object type
+        return found
+
+    def digests(self, template_rel: str, em_dash: str) -> set[str]:
+        key = (template_rel, em_dash)
+        if key not in self._digests:
+            blobs = self._load().get(template_rel, set())
+            self._digests[key] = {
+                _digest(_render(self._content[b], em_dash)) for b in blobs if b in self._content
+            }
+        return self._digests[key]
+
+
+_HISTORY = _History(TEMPLATE_ROOT)
+
+
+class ProjectSync:
+    """Per-project state for one run: manifest, setting, kept files."""
+
+    def __init__(self, path: Path, dry_run: bool = False) -> None:
+        self.path = path
+        self.dry_run = dry_run
+        self.em_dash = _project_em_dash(path)
+        self.kept: list[str] = []
+        self.written = 0
+        self._manifest_path = path / MANIFEST_REL
+        try:
+            data = json.loads(self._manifest_path.read_text(encoding="utf-8"))
+            files = data.get("files") if isinstance(data, dict) else None
+            self.manifest: dict[str, str] = {
+                k: v for k, v in (files or {}).items() if isinstance(k, str) and isinstance(v, str)
+            }
+        except (OSError, ValueError):
+            self.manifest = {}
+        self._dirty = False
+
+    def _rel(self, dst: Path) -> str:
+        return dst.relative_to(self.path).as_posix()
+
+    def _record(self, rel: str, digest: str) -> None:
+        if self.manifest.get(rel) != digest:
+            self.manifest[rel] = digest
+            self._dirty = True
+
+    def _drop_upstream_copy(self, rel: str) -> None:
+        stale = self.path / UPSTREAM_REL / rel
+        if stale.is_file() and not self.dry_run:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+
+    def _write(self, src: Path, dst: Path, data: bytes, raw: bool) -> None:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if raw:
+            shutil.copy2(src, dst)
+        else:
+            dst.write_bytes(data)
+            shutil.copymode(src, dst)
+
+    def write_managed(self, src: Path, dst: Path) -> str:
+        """Write one template file unless the project edited it.
+
+        Returns "written", "same" or "kept". In order: missing -> write;
+        equal to upstream -> record; equal to the manifest hash or to any
+        upstream version in git history -> untouched, overwrite; else kept.
+        """
+        rel = self._rel(dst)
+        raw_src = src.read_bytes()
+        new = _render(raw_src, self.em_dash)
+        new_digest = _digest(new)
+        exists = dst.exists()
+        try:
+            current = dst.read_bytes() if exists else None
+        except OSError as e:
+            # Unreadable is not missing: never overwrite what cannot be checked.
+            log.warning("  SKIPPED %s (cannot read it: %s); left as is", rel, e)
+            return "kept"
+        if current is not None:
+            cur_digest = _digest(current)
+            if cur_digest == new_digest:
+                self._record(rel, new_digest)
+                self._drop_upstream_copy(rel)
+                return "same"
+            try:
+                template_rel = src.resolve().relative_to(TEMPLATE_ROOT).as_posix()
+            except ValueError:
+                template_rel = ""
+            untouched = (
+                cur_digest == self.manifest.get(rel)
+                or (template_rel and cur_digest in _HISTORY.digests(template_rel, self.em_dash))
+            )
+            if not untouched:
+                upstream = UPSTREAM_REL / rel
+                if not self.dry_run:
+                    try:
+                        (self.path / upstream).parent.mkdir(parents=True, exist_ok=True)
+                        (self.path / upstream).write_bytes(new)
+                    except OSError as e:
+                        log.warning("  could not write %s: %s", upstream.as_posix(), e)
+                self.kept.append(rel)
+                log.warning("  KEPT %s (local edit). Upstream: %s. To take it, copy that file "
+                            "over yours and sync again.", rel, upstream.as_posix())
+                return "kept"
+        if not self.dry_run:
+            try:
+                self._write(src, dst, new, raw=new is raw_src)
+            except OSError as e:
+                # One locked file must not abort this project or the next ones.
+                log.warning("  SKIPPED %s (cannot write it: %s)", rel, e)
+                return "kept"
+            self._record(rel, new_digest)
+            self._drop_upstream_copy(rel)
+        self.written += 1
+        return "written"
+
+    def save(self) -> None:
+        if self.dry_run or not self._dirty:
+            return
+        try:
+            self._manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            body = {"version": 1, "files": dict(sorted(self.manifest.items()))}
+            tmp = self._manifest_path.with_name(self._manifest_path.name + f".{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(body, indent=1) + "\n", encoding="utf-8")
+            os.replace(tmp, self._manifest_path)
+        except OSError as e:
+            log.warning("  sync manifest not saved: %s", e)
+
+
+def _copy_dir(src: Path, dst: Path, state: ProjectSync) -> int:
+    """Recursively sync src to dst, skipping excluded items. Returns file count."""
     count = 0
     for item in src.iterdir():
         if item.name in SKIP_DIRS:
@@ -109,10 +377,9 @@ def _copy_dir(src: Path, dst: Path, dry_run: bool = False) -> int:
         if item.name in SKIP_FILES:
             continue
         if item.is_dir():
-            count += _copy_dir(item, dst / item.name, dry_run=dry_run)
+            count += _copy_dir(item, dst / item.name, state)
         else:
-            if not dry_run:
-                shutil.copy2(item, dst / item.name)
+            state.write_managed(item, dst / item.name)
             count += 1
     return count
 
@@ -234,14 +501,15 @@ def _seed_catalog_block(path: Path, prefix: str, dry_run: bool = False) -> int:
     return 1
 
 
-def _sync_retro(path: Path, prefix: str, dry_run: bool = False) -> int:
+def _sync_retro(path: Path, prefix: str, state: ProjectSync) -> int:
     """Copy .github/retro/ (analyzer + README, never tests/) and merge the
     seeded registry into the project's rules.json without overwriting it."""
     src = TEMPLATE_ROOT / ".github" / "retro"
     if not src.exists():
         return 0
+    dry_run = state.dry_run
     dst = path / ".github" / "retro"
-    n = _copy_dir(src, dst, dry_run=dry_run)
+    n = _copy_dir(src, dst, state)
     log.info("  %s.github/retro  %d files", prefix, n)
     seed = src / "rules.seed.json"
     target = dst / "rules.json"
@@ -269,15 +537,16 @@ def _sync_retro(path: Path, prefix: str, dry_run: bool = False) -> int:
 WORKFLOW_MARKER = "coograph:managed"
 
 
-def _sync_layout(path: Path, prefix: str, dry_run: bool = False) -> int:
+def _sync_layout(path: Path, prefix: str, state: ProjectSync) -> int:
     """Copy .github/layout/ (checker, seed, CI assets; never tests/ or
     layout.json), seed or merge the project's layout.json, and refresh the
     layout workflow only in projects that opted into it at init."""
     src = TEMPLATE_ROOT / ".github" / "layout"
     if not src.exists():
         return 0
+    dry_run = state.dry_run
     dst = path / ".github" / "layout"
-    n = _copy_dir(src, dst, dry_run=dry_run)
+    n = _copy_dir(src, dst, state)
     log.info("  %s.github/layout  %d files", prefix, n)
     seed = src / "layout.seed.json"
     if seed.exists():
@@ -297,16 +566,16 @@ def _sync_layout(path: Path, prefix: str, dry_run: bool = False) -> int:
     workflow_src = src / "coograph-layout.yml"
     if workflow.exists() and workflow_src.exists():
         # Refreshed only while it still carries the managed marker: a project
-        # that deleted the line has edited the workflow and owns it now.
+        # that deleted the line has edited the workflow and owns it now. With
+        # the marker it is still a template file: an edit is kept (KEPT line).
         try:
             managed = WORKFLOW_MARKER in workflow.read_text(encoding="utf-8", errors="replace")
         except OSError:
             managed = False
         if managed:
-            if not dry_run:
-                shutil.copy2(workflow_src, workflow)
-            log.info("  %s.github/workflows/coograph-layout.yml  1 file", prefix)
-            n += 1
+            if state.write_managed(workflow_src, workflow) != "kept":
+                log.info("  %s.github/workflows/coograph-layout.yml  1 file", prefix)
+                n += 1
         else:
             log.info("  %s.github/workflows/coograph-layout.yml  kept (customized: no %s line)",
                      prefix, WORKFLOW_MARKER)
@@ -427,6 +696,9 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
     code_graph = project.get("code_graph", False)
     prefix = "[DRY-RUN] " if dry_run else ""
     log.info("  %sconfig: tools=%s, code_graph=%s", prefix, sorted(tools), code_graph)
+    state = ProjectSync(path, dry_run=dry_run)
+    if state.em_dash != "keep":
+        log.info("  %sem dashes: %s (openspec/config.yaml sync.em_dash)", prefix, state.em_dash)
     total = 0
 
     # Always-copy: .github/skills/ is consumed by every supported tool
@@ -434,15 +706,15 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
     # Aider, Cline). Mirror what coograph-init does at install time.
     skills_src = TEMPLATE_ROOT / ".github" / "skills"
     if skills_src.exists():
-        n = _copy_dir(skills_src, path / ".github" / "skills", dry_run=dry_run)
+        n = _copy_dir(skills_src, path / ".github" / "skills", state)
         log.info("  %s.github/skills  %d files", prefix, n)
         total += n
 
     # Retro analyzer + registry: every tool runs the /coograph-retro skill,
     # so this is always-copy too. Capture hooks are Claude-only (below).
-    total += _sync_retro(path, prefix, dry_run=dry_run)
+    total += _sync_retro(path, prefix, state)
     # Layout checker: tool-neutral like retro, so always-copy.
-    total += _sync_layout(path, prefix, dry_run=dry_run)
+    total += _sync_layout(path, prefix, state)
     total += _seed_models_block(path, prefix, dry_run=dry_run)
 
     # Claude Code commands
@@ -453,12 +725,9 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
         top_src = TEMPLATE_ROOT / ".claude" / "commands"
         if top_src.exists():
             top_dst = path / ".claude" / "commands"
-            if not dry_run:
-                top_dst.mkdir(parents=True, exist_ok=True)
             n = 0
             for item in top_src.glob("coograph-*.md"):
-                if not dry_run:
-                    shutil.copy2(item, top_dst / item.name)
+                state.write_managed(item, top_dst / item.name)
                 n += 1
             if n:
                 log.info("  %s.claude/commands/coograph-*.md  %d files", prefix, n)
@@ -469,14 +738,14 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
         # mirrors the dir for backwards compatibility with older templates.
         src = TEMPLATE_ROOT / ".claude" / "commands" / "project"
         if src.exists() and any(src.iterdir()):
-            n = _copy_dir(src, path / ".claude" / "commands" / "project", dry_run=dry_run)
+            n = _copy_dir(src, path / ".claude" / "commands" / "project", state)
             log.info("  %s.claude/commands/project  %d files", prefix, n)
             total += n
 
         # Claude Code lifecycle hooks (block generated files, log bash, etc.)
         hooks_src = TEMPLATE_ROOT / ".claude" / "hooks"
         if hooks_src.exists():
-            n = _copy_dir(hooks_src, path / ".claude" / "hooks", dry_run=dry_run)
+            n = _copy_dir(hooks_src, path / ".claude" / "hooks", state)
             log.info("  %s.claude/hooks  %d files", prefix, n)
             total += n
 
@@ -490,8 +759,7 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
         # personal overrides in settings.local.json (not synced).
         settings_src = TEMPLATE_ROOT / ".claude" / "settings.json"
         if settings_src.exists():
-            if not dry_run:
-                shutil.copy2(settings_src, path / ".claude" / "settings.json")
+            state.write_managed(settings_src, path / ".claude" / "settings.json")
             log.info("  %s.claude/settings.json  1 file", prefix)
             total += 1
 
@@ -500,7 +768,7 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
         for subdir in ("agents", "prompts", "instructions"):
             src = TEMPLATE_ROOT / ".github" / subdir
             if src.exists():
-                n = _copy_dir(src, path / ".github" / subdir, dry_run=dry_run)
+                n = _copy_dir(src, path / ".github" / subdir, state)
                 log.info("  %s.github/%s  %d files", prefix, subdir, n)
                 total += n
         total += _sync_agents_md(path, prefix, dry_run=dry_run)
@@ -509,7 +777,7 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
     if code_graph:
         src = TEMPLATE_ROOT / ".github" / "code-graph"
         if src.exists():
-            n = _copy_dir(src, path / ".github" / "code-graph", dry_run=dry_run)
+            n = _copy_dir(src, path / ".github" / "code-graph", state)
             log.info("  %s.github/code-graph  %d files", prefix, n)
             total += n
 
@@ -524,9 +792,13 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
     # Remove paths that previous template versions placed but have since
     # been renamed / removed. See OBSOLETE_PATHS at the top of the module.
     obsolete = _cleanup_obsolete(path, dry_run=dry_run)
+    state.save()
 
-    log.info("%sSYNC %s - %d files updated, %d obsolete removed",
-             prefix, path, total, obsolete)
+    log.info("%sSYNC %s - %d files checked, %d written, %d kept (local edits), %d obsolete removed",
+             prefix, path, total, state.written, len(state.kept), obsolete)
+    if state.kept:
+        log.warning("%s%d locally edited file(s) kept in %s; upstream copies are under %s/",
+                    prefix, len(state.kept), path, UPSTREAM_REL.as_posix())
 
     # Rebuild graph + regenerate visualizer (skipped on dry-run)
     if code_graph and not dry_run:
@@ -658,28 +930,47 @@ def _ensure_hooks() -> None:
         log.warning("Failed to set core.hooksPath: %s", result.stderr.strip())
 
 
-def main() -> None:
-    dry_run = "--dry-run" in sys.argv
+def _same_path(a: str, b: Path) -> bool:
+    try:
+        return Path(a).resolve() == b.resolve()
+    except OSError:
+        return False
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Sync coograph to registered projects")
+    parser.add_argument("--dry-run", action="store_true", help="decide and log, write nothing")
+    parser.add_argument("--project", metavar="PATH", help="sync only this registered project")
+    args = parser.parse_args(argv)
+    dry_run = args.dry_run
     if dry_run:
         log.info("=== DRY-RUN: no files will be written or removed ===")
 
-    if not dry_run:
+    if not dry_run and args.project is None:
         _ensure_hooks()
 
     if not PROJECTS_FILE.exists():
         log.info("projects.json not found - no projects registered.")
-        return
+        return 2 if args.project else 0
 
     try:
         data = json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
         log.error("Failed to read projects.json: %s", e)
-        sys.exit(1)
+        return 1
 
     projects = data.get("projects", [])
+    if args.project is not None:
+        projects = [p for p in projects if _same_path(p.get("path", ""), Path(args.project))]
+        if not projects:
+            log.error("%s is not registered in projects.json (coograph-init registers it)",
+                      args.project)
+            return 2
     if not projects:
         log.info("No projects registered in projects.json.")
-        return
+        return 0
 
     log.info("Starting sync for %d registered project(s)...", len(projects))
     t_start = time.perf_counter()
@@ -691,7 +982,8 @@ def main() -> None:
 
     log.info("Sync complete: %d/%d project(s) updated in %.2fs",
              ok, len(projects), time.perf_counter() - t_start)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

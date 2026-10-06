@@ -106,7 +106,7 @@ APPROVE | REQUEST_CHANGES | NEEDS_MORE_EVIDENCE
 - **Never self-approve work you authored.** Verification must be an independent pass.
 - **Run commands yourself.** Do not accept "I ran the tests and they passed" without seeing the output.
 - **Fresh evidence only.** Output from before the latest change is stale and invalid.
-- **Follow `.github/copilot-instructions.md`** for the project's build/test commands.
+- **Follow `AGENTS.md` § Commands (`.github/copilot-instructions.md` when `AGENTS.md` has no Commands section)** for the project's build/test commands.
 
 ## Failure Modes To Avoid
 

@@ -40,6 +40,9 @@ overwritten; new seed keys are added without touching existing values.
 }
 ```
 
+Optional, not in the seed: `"guard": {"roots": ["apps/web/src/", "packages/core/src/"], ...}`
+(see `--guard` below).
+
 Globs are anchored at the repo root: `**` crosses directories, `*` and `?` do
 not. In a doc's or gotcha's `paths:`, a pattern without `/` also matches a file
 name at any depth. A single-package repo sets `routers` to `[]`; a monorepo
@@ -92,6 +95,7 @@ proposes pruning it.
 python3 .github/layout/layout.py --budget            # one line per tier; exit 1 when anything is over
 python3 .github/layout/layout.py --json              # full measurement (what Retro reads)
 python3 .github/layout/layout.py --guard BASE HEAD   # exit 1 when covered code changed but its doc did not
+python3 .github/layout/layout.py --guard BASE HEAD --strict  # also exit 1 on changed code no doc covers
 python3 .github/layout/layout.py --merge-seed        # create layout.json, or add new seed keys
 python -m unittest discover -s .github/layout/tests  # tests (coograph repo only)
 ```
@@ -105,9 +109,20 @@ three or more dated headings. A structural project needs
 
 `--guard` maps each changed source path to the feature docs whose `paths:`
 cover it, and fails when none of them changed in the same diff. Paths no doc
-covers are listed as `uncovered` and never fail. Skip it for one PR with the
-skip marker in the PR title (CI passes the title as `COOGRAPH_PR_TITLE`), or set
-`COOGRAPH_LAYOUT_SKIP=1`.
+covers are listed as `uncovered` and never fail, unless `--strict` is given:
+then each is printed as `UNCOVERED  <path>` and the guard exits 1, so coverage
+cannot shrink silently. A path deleted between BASE and HEAD is never reported
+uncovered (a deleted covered path still needs its doc updated). Skip it for one
+PR with the skip marker in the PR title (CI passes the title as
+`COOGRAPH_PR_TITLE`), or set `COOGRAPH_LAYOUT_SKIP=1`.
+
+`guard.roots` (optional, absent by default) limits the guard to the parts of the
+repo it should watch, for example a monorepo's `apps/web/src/` and
+`packages/core/src/`. A changed path counts only when it equals a root or lies
+under it (a trailing `/` is optional; a root is a plain repo-relative path as
+git prints it, no globs, no leading `./`); everything else is neither a failure nor
+uncovered, even when a doc's `paths:` covers it. Without `roots` the whole repo
+is checked, as before.
 
 ## CI and pre-commit (opt-in)
 

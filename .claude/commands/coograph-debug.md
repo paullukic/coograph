@@ -42,7 +42,7 @@ After 3 failed hypotheses, **STOP**. Report what was tried and ask for direction
 - No speculation — "seems like" and "probably" are not findings. Show evidence or drop the claim.
 - Fix with minimal diff. Do not refactor, rename, optimize, or redesign while fixing.
 - **Scope check after every fix**: review your diff before declaring done. Revert any change not directly related to the root cause.
-- Follow all conventions in `.github/copilot-instructions.md`.
+- Follow all rules and conventions in `AGENTS.md` § Hard rules and `.github/copilot-instructions.md` (when `AGENTS.md` has no Hard rules section, `.github/copilot-instructions.md` holds them all).
 
 ## Output Format
 

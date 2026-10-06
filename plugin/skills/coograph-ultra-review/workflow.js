@@ -60,7 +60,7 @@ const DIMENSIONS = Array.isArray(a.dimensions) && a.dimensions.length
 const CONSTRAINTS = `Constraints, non-negotiable:
 - Repository: ${PATH}. Use git only to read (git show, git diff, git log). Never edit, stage, commit, stash or checkout anything, in this or any other repository.
 - Code-graph first: load the mcp__code-graph__* tools with ToolSearch and call get_review_context / query_graph before grep; fall back to grep only when they are missing or return nothing for a file.
-- Read the project's conventions first (.github/copilot-instructions.md, CLAUDE.md or AGENTS.md, whichever exists) and, when the project uses OpenSpec, the active change's proposal, spec and tasks for the intended scope.
+- Read the project's rules and conventions first (AGENTS.md hard rules, .github/copilot-instructions.md and .github/instructions/review.instructions.md where they exist; otherwise CLAUDE.md) and, when the project uses OpenSpec, the active change's proposal, spec and tasks for the intended scope.
 - Every finding is verified from a fresh read of the file on disk at the reviewed commit (git show <hash>:<path> when the working tree may differ) and carries a verbatim quote of the line(s), the file path, the line number, and a concrete failure scenario (inputs and state -> wrong outcome). No quote, no finding.
 - Commands you may run besides reading and git: ${ALLOWED.length ? ALLOWED.join(', ') : 'none'}. Do not run the test suite, a build, a formatter, a package manager or anything that starts a server.
 - Skip style the formatters cover. Report only Critical and Warning with evidence; Nits only when they hide a real defect.

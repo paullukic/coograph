@@ -56,13 +56,13 @@ Keep the final plan grounded in current source-of-truth file reads regardless of
 
 ### Phase 1 — Investigate (before asking the user anything)
 
-1. **Read `.github/copilot-instructions.md`** to understand conventions and stack.
+1. **Read `AGENTS.md` § Hard rules and `.github/copilot-instructions.md` (when `AGENTS.md` has no Hard rules section, `.github/copilot-instructions.md` holds them all)** to understand rules, conventions and stack.
 2. **Explore the codebase** to understand the area being changed:
    - Search for relevant files, patterns, and existing implementations.
    - Identify integration points and dependencies.
    - Surface existing patterns the plan should match.
    - Find potential risks or complications.
-3. **Classify the request** (aligned with the OPENSPEC OR STOP HARD RULE in `.github/copilot-instructions.md`):
+3. **Classify the request** (aligned with the OPENSPEC OR STOP HARD RULE in `AGENTS.md` § Hard rules):
    - **Exempt** (typo fix, comment/docstring-only edit, user-dictated config-value bump, or follow-up for an already-approved in-progress OpenSpec) → suggest direct implementation, skip planning, skip OpenSpec. "Obvious fix", "just one tweak", and "it's small" are NOT exemptions.
    - **Scoped** (2-5 files, clear boundaries, not exempt) → brief plan with 3-5 steps, then hand off to `/coograph-propose`.
    - **Complex** (multi-system, unclear scope) → thorough plan with investigation, then hand off to `/coograph-propose`.
@@ -116,7 +116,7 @@ Keep the final plan grounded in current source-of-truth file reads regardless of
 - **Never start implementation.** Always hand off — suggest `/coograph-propose` → `/coograph-apply`.
 - **Default to 3-8 steps.** Avoid architecture redesign unless the task requires it.
 - **Stop planning when the plan is actionable.** Do not over-specify.
-- **Follow `.github/copilot-instructions.md`** — the plan must respect all project conventions.
+- **Follow `AGENTS.md` § Hard rules and `.github/copilot-instructions.md`** — the plan must respect all project rules and conventions.
 
 ## Failure Modes To Avoid
 

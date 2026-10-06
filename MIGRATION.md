@@ -4,6 +4,38 @@
 
 ---
 
+## 2026-10-06: Sync keeps local edits (plugin 1.8.2)
+
+**Fixed: sync no longer overwrites a project's edits to template-managed files.** Until now every sync copied `.github/skills/`, `.github/retro/`, `.github/layout/`, `.github/code-graph/`, `.claude/hooks/`, `.claude/commands/coograph-*.md`, `.claude/settings.json` and the managed layout workflow over the project's copies, so a retro hook upgrade, a local fix or a house-style pass was reverted in the working tree on the next `git pull` of coograph, with only "N files updated" in the log.
+
+Sync now records what it wrote in `.coograph/sync-manifest.json`. A file that matches neither that record nor any version coograph ever shipped is a local edit: sync keeps it, writes the upstream version to `.coograph/upstream/<path>`, and logs one line per file:
+
+```
+KEPT .claude/hooks/warn-scope.py (local edit). Upstream: .coograph/upstream/.claude/hooks/warn-scope.py. To take it, copy that file over yours and sync again.
+```
+
+What to do after this pull:
+
+1. **Check whether an earlier sync already overwrote your edits:** `git status` / `git diff` in the project. A file sync replaced shows as modified against your last commit. To get your version back: `git restore <path>` (or `git checkout -- <path>`). The next sync keeps it.
+2. **Read the `KEPT` lines** of the next sync (`.github/sync.log`, or `python3 .github/sync.py --dry-run --project <path>` in coograph). For each one, either keep your version, or take upstream with `cp .coograph/upstream/<path> <path>`, or merge the two by hand. A file whose content then equals upstream is tracked again from the next sync.
+3. **If your project normalised em dashes in synced files,** add this to `openspec/config.yaml` before syncing, or every such file is reported as `KEPT`:
+
+   ```yaml
+   sync:
+     em_dash: hyphen
+   ```
+
+Also in this release:
+
+- `layout.py`: optional `guard.roots` in `layout.json` limits `--guard` to the listed paths; `--guard --strict` fails on changed code no feature doc covers (`UNCOVERED  <path>`); a deleted path is never reported uncovered. Nothing changes for a `layout.json` without them.
+- `warn-scope.py`: silent outside the project and for anything under `openspec/`; the active change is the one whose `tasks.md` changed last; a backticked `tasks.md` path ending in `/` covers everything under it; one warning per path per session (repeats are recorded as `suppressed`); `NotebookEdit` is checked.
+- Command, skill and agent briefs point at `AGENTS.md` § Hard rules and § Commands (the tier layout), with `.github/copilot-instructions.md` as the fallback. The review briefs also read `.github/instructions/review.instructions.md` when it exists.
+- Re-running init refreshes template-managed files through `sync.py --project` in repo mode, or asks once in plugin mode, instead of replacing them.
+
+**Update the installed plugin too** (marketplace Update to 1.8.2), so the plugin's own `warn-scope.py` matches the project's.
+
+---
+
 ## 2026-10-06: Warn hooks the model can see (plugin 1.8.1)
 
 `warn-scope.py`, `openspec-gate-warn.py`, `no-new-deps-warn.py` and `defect-warn.py` used to warn by printing to stderr and exiting 1. Claude Code never shows that text to the model, so since they shipped they warned only the user's log, not the agent. They now speak through `hookSpecificOutput.additionalContext` (the model) and `systemMessage` (the terminal) and exit 0. Registered projects get the new hooks on the next `git pull` of coograph.

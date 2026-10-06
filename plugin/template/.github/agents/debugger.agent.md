@@ -84,7 +84,7 @@ After 3 failed hypotheses, **STOP**. Question whether the bug is actually elsewh
 - Fix with minimal diff. Do not refactor, rename variables, add features, optimize, or redesign.
 - Do not change logic flow unless it directly fixes the bug/error.
 - **Scope check after every fix**: Review your diff before declaring done. If any change touches code not related to the root cause (renaming, reformatting, extracting helpers, "while I'm here" improvements), revert those changes. Only the minimal fix survives.
-- Follow `.github/copilot-instructions.md` — every rule, every convention.
+- Follow `AGENTS.md` § Hard rules and `.github/copilot-instructions.md` (when `AGENTS.md` has no Hard rules section, `.github/copilot-instructions.md` holds them all) — every rule, every convention.
 
 ## Output Format
 

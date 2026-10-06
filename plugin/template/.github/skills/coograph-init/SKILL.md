@@ -92,13 +92,19 @@ template" signal — reuse the same invariant Steps 4, 5 and the Guardrails key 
     Step 4 (placeholder fill) entirely — see the State-C guards in those steps.
 
 **Template-managed files are exempt from the B and C restrictions.** Files that
-users never customize and that `sync.py` overwrites on every pull are copied
-whenever they are missing, and **replaced whenever they differ from the template
-root**, in every state (a plugin project has no sync, so re-init is its only
-refresh; keeping a stale `retro.py` beside a newer hook breaks both): `.github/skills/`, `.github/agents/`,
+`sync.py` keeps up to date are copied whenever they are missing, and **refreshed
+when they differ from the template root**, in every state (a plugin project has
+no sync, so re-init is its only refresh; keeping a stale `retro.py` beside a
+newer hook breaks both): `.github/skills/`, `.github/agents/`,
 `.claude/commands/coograph-*.md`, `.claude/hooks/`, `.claude/settings.json`,
 `.github/retro/` (without `rules.json`), and `.github/layout/` (without
-`layout.json`). This is how a project initialized before a
+`layout.json`). A project may have edited one on purpose (a retro hook upgrade,
+a local fix), so never replace them blindly: in repo mode, when the target is
+already in `projects.json`, refresh them with
+`python3 <coograph>/.github/sync.py --project <target>`, which keeps locally
+edited files, writes the upstream version to `.coograph/upstream/<path>` and
+names each one; otherwise list the files that differ and ask once (replace all,
+or keep the ones the user names) before replacing them. This is how a project initialized before a
 template feature existed (for example Retro) receives it on re-init. Step 10 then
 runs when the user enabled Retro in question 7 and `.github/retro/rules.json` is
 absent.
@@ -210,8 +216,8 @@ project-wide prompt:
 - **Every state:** template-managed files listed in Step 1b (skills, agents,
   `coograph-*` command wrappers, hooks, `settings.json`, `.github/retro/` without
   `rules.json`, `.github/layout/` without `layout.json`) are copied when missing
-  and replaced when they differ. Say which ones were replaced. They are never user-customized, and
-  `sync.py` overwrites them on every pull anyway.
+  and refreshed when they differ, as Step 1b says (sync `--project` in repo mode, one
+  question otherwise). Say which ones were replaced and which were kept as local edits.
 
 **Per-file overwrite safety** (applies in every state): use the Step 1b signal.
 - A **customized** file (exists, zero markers) SHALL NOT be overwritten without an
@@ -477,13 +483,13 @@ touch "$HOME/.config/git/ignore"
 
 The copied agent files already include a mandatory "Step 0 — Orient with Code-Graph" section with HARD-RULE wording (code-graph first, non-negotiable, only fall back when the DB is genuinely absent).
 
-Verify it is present in the target project by grepping each agent file for the literal string `MANDATORY — non-negotiable`:
+Verify it is present in the target project by grepping each agent file for `MANDATORY — non-negotiable` (or `MANDATORY - non-negotiable` in a project whose `openspec/config.yaml` sets `sync: em_dash: hyphen`):
 
 ```bash
-grep -L "MANDATORY — non-negotiable" <target>/.github/agents/*.agent.md
+grep -LE "MANDATORY (—|-) non-negotiable" <target>/.github/agents/*.agent.md
 ```
 
-Files returned (missing the marker) need the block restored — copy the Step 0 block from the matching file in `<template root>/.github/agents/` verbatim. Do not improvise the wording; the literal HARD RULE phrasing is what enforces the rule.
+Files returned (missing the marker) need the block restored — copy the Step 0 block from the matching file in `<template root>/.github/agents/` verbatim (with every `—` written as `-` under `em_dash: hyphen`, so sync still recognises the file as untouched). Do not improvise the wording; the literal HARD RULE phrasing is what enforces the rule.
 
 ## Step 8: Register in projects.json (repo mode only)
 

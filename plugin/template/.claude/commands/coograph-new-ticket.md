@@ -11,7 +11,7 @@ The full procedure lives in `.github/skills/coograph-new-ticket/SKILL.md`. Follo
 
 ## Steps (summary)
 
-1. **Pre-flight** — `get_minimal_context(...)` to confirm code-graph availability; check `openspec/changes/` for in-progress OpenSpecs; read `.github/copilot-instructions.md`.
+1. **Pre-flight** — `get_minimal_context(...)` to confirm code-graph availability; check `openspec/changes/` for in-progress OpenSpecs; read `AGENTS.md` § Hard rules and `.github/copilot-instructions.md` (when `AGENTS.md` has no Hard rules section, `.github/copilot-instructions.md` holds them all) if not already loaded.
 2. **Parse the ticket** — extract title, requirements, acceptance criteria, linked references. Flag vagueness.
 3. **Investigate** — use code-graph first (HARD RULE); identify affected files, existing patterns, risks, integration points. Scope investigation to the ticket.
 4. **Flow into `/coograph-plan` or the `coograph-propose` skill** — do NOT implement. The proposal skill creates artifacts and waits for explicit user approval.

@@ -40,7 +40,7 @@ The caller specifies one — default to **medium** if unspecified:
 
 ## Rules
 
-- Read `.github/copilot-instructions.md` for project conventions when relevant.
+- Read `AGENTS.md` § Hard rules and `.github/copilot-instructions.md` (when `AGENTS.md` has no Hard rules section, `.github/copilot-instructions.md` holds them all) for project rules and conventions when relevant.
 - Never edit files.
 - Every claim cites `file:line` with verbatim quotes. No proof → drop it.
 - Quantify: grep the codebase, report exact counts (e.g. "found in 14 files").

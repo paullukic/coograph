@@ -18,7 +18,7 @@ Before doing anything else:
 
 1. **Code-graph availability** — call `get_minimal_context` with a one-line summary of the ticket. Record whether code-graph is available. If available, use it for ALL navigation in subsequent steps.
 2. **Check for in-progress work** — list `openspec/changes/` (skip `archive/`). If an existing OpenSpec overlaps with this ticket, stop and ask: "There's an in-progress change `<name>` — is this ticket related, or should I start fresh?"
-3. **Read conventions** — read `.github/copilot-instructions.md` if not already loaded.
+3. **Read conventions** — read `AGENTS.md` § Hard rules and `.github/copilot-instructions.md` (when `AGENTS.md` has no Hard rules section, `.github/copilot-instructions.md` holds them all) if not already loaded.
 
 ## Step 2: Parse the ticket
 
