@@ -2,7 +2,8 @@
 """openspec-gate-warn: PreToolUse hook that warns when a session edits a second
 source file without an OpenSpec.
 
-`OPENSPEC OR STOP` is the loudest rule in CLAUDE.md and, until this hook, had
+`OPENSPEC OR STOP` is the loudest hard rule (AGENTS.md, or CLAUDE.md in a
+project on the older layout) and, until this hook, had
 no enforcement: its detector in capture-signals.py is heuristic and runs after
 the session ends. This hook mirrors that detector live, at the moment the
 second distinct source file is about to be edited.
@@ -160,7 +161,7 @@ def main() -> int:
 
     warn_model(payload, (
         f"[openspec-gate] second source file this session ({rel}) with no OpenSpec touched "
-        "and no active change under openspec/changes/. CLAUDE.md OPENSPEC OR STOP: "
+        "and no active change under openspec/changes/. Hard rule OPENSPEC OR STOP: "
         "propose first, or name the literal exemption."
     ))
     _touch(_marker(cwd, "warned", sid))
