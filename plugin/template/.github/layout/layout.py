@@ -232,13 +232,32 @@ def list_files(cwd: Path) -> list[str]:
     return sorted(found)
 
 
-def find_files(cwd: Path, patterns: list[str]) -> list[str]:
+STALE_SKIP = {".git", "node_modules"}
+
+
+def _paths_exist(cwd: Path, patterns: list[str], files: list[str]) -> bool:
+    """Does any file match? Tracked files first, then the disk: a gotcha about
+    a gitignored file (`.env.production`, generated output) is not stale just
+    because git does not list it."""
+    if any(path_matches(p, f) for p in patterns for f in files):
+        return True
+    globs = []
+    for p in patterns:
+        p = p.strip().strip("`").strip()
+        if p:
+            globs.append(p if "/" in p else "**/" + p)  # bare names match at any depth
+    return bool(find_files(cwd, globs, skip=STALE_SKIP))
+
+
+def find_files(cwd: Path, patterns: list[str], skip: set[str] | None = None) -> list[str]:
     """Files matching root-anchored globs, found without git and without ever
     entering WALK_SKIP directories (node_modules, .git, ...).
 
     For hooks that run on every tool call: `git ls-files` costs a process, and
     Path.glob("*/*/X") lists every package under node_modules first.
+    `skip` replaces WALK_SKIP (the staleness check walks dist/ and build/ too).
     """
+    skip = WALK_SKIP if skip is None else skip
     found: set[str] = set()
     for pattern in patterns:
         pattern = pattern.strip().replace("\\", "/")
@@ -247,7 +266,7 @@ def find_files(cwd: Path, patterns: list[str]) -> list[str]:
         regex = glob_regex(pattern)
         if "**" in pattern:
             for root, dirs, names in os.walk(cwd):
-                dirs[:] = [d for d in dirs if d not in WALK_SKIP]
+                dirs[:] = [d for d in dirs if d not in skip]
                 for name in names:
                     rel = (Path(root) / name).relative_to(cwd).as_posix()
                     if regex.match(rel):
@@ -265,7 +284,7 @@ def find_files(cwd: Path, patterns: list[str]) -> list[str]:
                 except OSError:
                     continue
                 for e in entries:
-                    if e.name in WALK_SKIP or not part_re.match(e.name):
+                    if e.name in skip or not part_re.match(e.name):
                         continue
                     rel = f"{prefix}/{e.name}" if prefix else e.name
                     if last and e.is_file():
@@ -552,10 +571,7 @@ def measure(cwd: Path, config: dict, source: str = "") -> dict:
         if g["bytes"] > GOTCHA_ENTRY_MAX_BYTES:
             over.append({"file": f"{g['file']}#{g['id']}", "tier": "gotcha_entry",
                          "tokens": g["bytes"] // 4, "budget": GOTCHA_ENTRY_MAX_BYTES // 4})
-    stale = [
-        g["id"] for g in gotchas
-        if g["paths"] and not any(path_matches(p, f) for p in g["paths"] for f in files)
-    ]
+    stale = [g["id"] for g in gotchas if g["paths"] and not _paths_exist(cwd, g["paths"], files)]
 
     undocumented = []
     for d in docs:

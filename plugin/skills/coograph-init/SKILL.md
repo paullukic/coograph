@@ -93,7 +93,9 @@ template" signal — reuse the same invariant Steps 4, 5 and the Guardrails key 
 
 **Template-managed files are exempt from the B and C restrictions.** Files that
 users never customize and that `sync.py` overwrites on every pull are copied
-whenever they are missing, in every state: `.github/skills/`, `.github/agents/`,
+whenever they are missing, and **replaced whenever they differ from the template
+root**, in every state (a plugin project has no sync, so re-init is its only
+refresh; keeping a stale `retro.py` beside a newer hook breaks both): `.github/skills/`, `.github/agents/`,
 `.claude/commands/coograph-*.md`, `.claude/hooks/`, `.claude/settings.json`,
 `.github/retro/` (without `rules.json`), and `.github/layout/` (without
 `layout.json`). This is how a project initialized before a
@@ -207,7 +209,8 @@ project-wide prompt:
   (`.github/copilot-instructions.md`, `CLAUDE.md`, `AGENTS.md`, `openspec/config.yaml`).
 - **Every state:** template-managed files listed in Step 1b (skills, agents,
   `coograph-*` command wrappers, hooks, `settings.json`, `.github/retro/` without
-  `rules.json`) are copied when missing. They are never user-customized, and
+  `rules.json`, `.github/layout/` without `layout.json`) are copied when missing
+  and replaced when they differ. Say which ones were replaced. They are never user-customized, and
   `sync.py` overwrites them on every pull anyway.
 
 **Per-file overwrite safety** (applies in every state): use the Step 1b signal.

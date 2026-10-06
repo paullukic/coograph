@@ -22,7 +22,9 @@ Run:
 python3 .github/retro/retro.py --status
 ```
 
-Branch on the exit code and the line printed:
+A `layout:` line may come first. It reports the instruction layout and never changes the exit code. When it says `STRUCTURAL`, tell the user `/coograph-docs-restructure` is the fix, whatever the exit code, **before** stopping on any row below. A project with no captured signals still needs to hear it.
+
+Branch on the exit code and the `retro:` line printed:
 
 | exit | line | what to do |
 |---|---|---|
@@ -77,7 +79,7 @@ Work through the report and build a change list. Every change has exactly one of
 | `prune-rule` | an id in `prune_candidates` | remove the prose, remove the registry entry |
 | `structural` | `layout.structural` is true in `report.json` | one change, no patch: run `/coograph-docs-restructure`. It replaces every `add-rule`, `new-instruction-file` and prose `edit-rule` in this retro (list them under Watching); small edits cannot close a structural gap |
 | `add-gotcha` | a `build_retry` row in `>= deterministic_sessions` sessions whose program no `GOTCHAS.md` entry names in `commands:` | a new `GOTCHAS.md` entry (format in `.github/layout/README.md`); `Cause` and `Fix / rule` come from what the sessions show, never invented. If you cannot state the cause from evidence, list it under Watching |
-| `prune-gotcha` | an id in `layout.stale_gotchas` (its `paths:` match no file) | remove the entry from its `GOTCHAS.md` |
+| `prune-gotcha` | an id in `layout.stale_gotchas` (its `paths:` match no file, tracked or on disk) | remove the entry from its `GOTCHAS.md`; the task says to confirm the path is really gone before deleting, since a path can be created at build time |
 | `escalate-gotcha` | a row in `gotchas` with `retry_sessions >= deterministic_sessions` (surfaced, and a matching command still failed and was retried; approximate, because a build retry records only the first token, so a runner like `npx` counts as a match) | prose proposal for a lint rule or hook that makes the trap impossible; no patch, the user decides the mechanism |
 
 Rules that decide what survives:

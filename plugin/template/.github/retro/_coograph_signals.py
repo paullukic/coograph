@@ -897,7 +897,48 @@ def transcripts_dir_for(cwd: Path) -> Path | None:
 CALL_TO_ACTION = "run /coograph-retro"
 
 
+LAYOUT_REL = Path(".github") / "layout" / "layout.py"
+RESTRUCTURE = "run /coograph-docs-restructure"
+
+
+def layout_notice(cwd: Path) -> str | None:
+    """`[layout] ...` when the instruction files need attention, else None.
+
+    Independent of Retro: a structural layout costs tokens every session
+    whether or not any signal was captured, so it is reported at session
+    start instead of waiting for a retro that may never run. Never raises.
+    """
+    path = Path(cwd) / LAYOUT_REL
+    if not path.is_file():
+        return None
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("coograph_layout", path)
+        layout = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(layout)
+        config, source = layout.load_config(Path(cwd))
+        m = layout.measure(Path(cwd), config, source)
+    except Exception:
+        return None
+    if m.get("structural"):
+        reasons = m.get("structural_reasons") or []
+        more = f" (+{len(reasons) - 1} more)" if len(reasons) > 1 else ""
+        head = f"[layout] STRUCTURAL: {reasons[0] if reasons else 'over budget'}{more}"
+        call = f", {RESTRUCTURE}"
+        return head[: 160 - len(call)] + call
+    if m.get("over"):
+        return (f"[layout] {len(m['over'])} instruction file(s) over budget, "
+                "see python3 .github/layout/layout.py --budget")
+    return None
+
+
 def status_line(cwd: Path) -> str | None:
+    """SessionStart text: the retro line, plus the layout notice when there is one."""
+    lines = [line for line in (_retro_line(cwd), layout_notice(cwd)) if line]
+    return "\n".join(lines) or None
+
+
+def _retro_line(cwd: Path) -> str | None:
     """One line for SessionStart, or None when there is nothing to say."""
     rules = load_rules(cwd)
     if rules is None:

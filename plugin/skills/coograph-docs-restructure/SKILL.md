@@ -23,6 +23,17 @@ checked against the code; every fact you drop is listed with a reason.
 
 ---
 
+## Step 0: Resume or start
+
+Look for a non-archived `openspec/changes/*-docs-restructure/`.
+
+- **Found, not yet approved:** show it and ask whether to continue with it or discard it. Never start a second one alongside it.
+- **Found and approved:** this is a resume. Go to Phase 2 and continue at the first unticked task in its `tasks.md`. Do not re-run Phase 1. Do not rewrite `notes/` or `.coograph/layout-before.json`: they hold the only record of the original facts and the before numbers.
+- **An area name was given** (`/coograph-docs-restructure auth`): it applies only to an approved restructure. Run just that area's task. If no approved restructure exists, say so and stop.
+- **Not found:** Phase 1.
+
+---
+
 ## Phase 1: Propose
 
 ### Step 1: Take stock
@@ -30,7 +41,7 @@ checked against the code; every fact you drop is listed with a reason.
 ```bash
 python3 .github/layout/layout.py --budget
 mkdir -p .coograph
-python3 .github/layout/layout.py --json > .coograph/layout-before.json
+[ -f .coograph/layout-before.json ] || python3 .github/layout/layout.py --json > .coograph/layout-before.json
 ```
 
 If `.github/layout/layout.py` is missing, the project predates the layout
