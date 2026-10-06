@@ -106,6 +106,14 @@ class ConfigTests(Base):
         self.assertIn("structural_factor", added)
         self.assertIn("budgets.router", added)
 
+    def test_merge_leaves_complete_file_byte_identical(self) -> None:
+        target = self.p.root / ".github/layout/layout.json"
+        target.parent.mkdir(parents=True)
+        body = b"\xef\xbb\xbf" + json.dumps(layout.DEFAULTS, indent=4).encode("utf-8") + b"\r\n"
+        target.write_bytes(body)
+        self.assertEqual(layout.merge_seed(target, LAYOUT_DIR / "layout.seed.json"), [])
+        self.assertEqual(target.read_bytes(), body)
+
     def test_merge_creates_from_seed(self) -> None:
         target = self.p.root / ".github/layout/layout.json"
         layout.merge_seed(target, LAYOUT_DIR / "layout.seed.json")
@@ -131,6 +139,11 @@ class GlobTests(unittest.TestCase):
             ("**/*.lock", "a/b/Cargo.lock", True),
             ("app.config.ts", "apps/mobile/app.config.ts", True),
             ("docs/features/*.md", "docs/features/auth.md", True),
+            ("apps/web/src/**/*.{ts,tsx}", "apps/web/src/a/b.tsx", True),
+            ("apps/web/src/**/*.{ts,tsx}", "apps/web/src/a.ts", True),
+            ("apps/web/src/**/*.{ts,tsx}", "apps/web/src/a.js", False),
+            ("{apps,packages}/*/AGENTS.md", "packages/core/AGENTS.md", True),
+            ("odd{brace.md", "odd{brace.md", True),
         ]
         for pattern, rel, want in cases:
             with self.subTest(pattern=pattern, rel=rel):
@@ -232,6 +245,24 @@ class BudgetTests(Base):
         path.write_bytes(b"\xef\xbb\xbf---\npaths: [\"a/**\"]\n---\n# A\n")
         self.assertEqual(self.p.measure()["tiers"]["doc"]["without_paths"], [])
 
+    def test_package_names_in_prose_are_not_missing_imports(self) -> None:
+        self.p.write(".github/copilot-instructions.md",
+                     "Use @tanstack/react-query for server state and @angular/core v17. Ping @x.y.\n")
+        self.assertEqual(self.p.measure()["tiers"]["always_loaded"]["missing_imports"], [])
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(layout.main(["--cwd", str(self.p.root), "--budget"]), 0)
+
+    @unittest.skipUnless(shutil.which("git"), "git not installed")
+    def test_gitignored_router_is_still_measured(self) -> None:
+        """Instruction files kept out of git (global excludesfile) still load."""
+        self.p.git("init", "-q")
+        self.p.write(".gitignore", "AGENTS.md\n")
+        self.p.write("apps/web/AGENTS.md", "x" * 12000)
+        self.assertNotIn("apps/web/AGENTS.md", layout.list_files(self.p.root))
+        self.assertIn("apps/web/AGENTS.md", [o["file"] for o in self.p.measure()["over"]])
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(layout.main(["--cwd", str(self.p.root), "--budget"]), 1)
+
     def test_doc_without_paths_reported(self) -> None:
         self.p.write("docs/features/auth.md", "# Auth\n")
         self.p.write("docs/features/billing.md", "---\npaths:\n  - apps/billing/**\n---\n# Billing\n")
@@ -281,6 +312,14 @@ class GotchaTests(Base):
         self.assertEqual(e["commands"], ["expo export"])
         self.assertEqual(e["missing"], [])
         self.assertTrue(e["text"].startswith("## expo-env"))
+
+    def test_brace_glob_paths_stay_one_pattern(self) -> None:
+        entry = layout.parse_gotchas(GOTCHA.replace("`apps/mobile/**`, `app.config.ts`",
+                                                    "`apps/web/src/**/*.{ts,tsx}`, `app.config.ts`"))[0]
+        self.assertEqual(entry["paths"], ["apps/web/src/**/*.{ts,tsx}", "app.config.ts"])
+        self.p.write("GOTCHAS.md", GOTCHA.replace("`apps/mobile/**`, `app.config.ts`", "`apps/web/src/**/*.{ts,tsx}`"))
+        self.p.write("apps/web/src/a/b.tsx", "x")
+        self.assertEqual(self.p.measure()["stale_gotchas"], [])
 
     def test_missing_fields_invalid(self) -> None:
         self.p.write("GOTCHAS.md", "## broken\n- **Symptom:** x\n")
@@ -584,13 +623,26 @@ class SyncTests(Base):
         self.assertFalse((self.p.root / ".github" / "layout" / "layout.json").exists())
         self.assertEqual((self.p.root / ".github/workflows/coograph-layout.yml").read_text(encoding="utf-8"), "old\n")
 
-    def test_workflow_refreshed_only_when_present(self) -> None:
+    def test_workflow_refreshed_only_when_present_and_managed(self) -> None:
         wf = self.p.root / ".github" / "workflows" / "coograph-layout.yml"
         self.sync.sync_project(self._project())
         self.assertFalse(wf.exists())
-        self.p.write(".github/workflows/coograph-layout.yml", "old\n")
+        self.p.write(".github/workflows/coograph-layout.yml", "# coograph:managed (old)\nold\n")
         self.sync.sync_project(self._project())
         self.assertEqual(wf.read_bytes(), (LAYOUT_DIR / "coograph-layout.yml").read_bytes())
+
+    def test_customized_workflow_is_kept(self) -> None:
+        self.p.write(".github/workflows/coograph-layout.yml", "name: mine\non: push\n")
+        with self.assertLogs("code-graph.sync", level="INFO") as logs:
+            self.sync.sync_project(self._project())
+        self.assertEqual((self.p.root / ".github/workflows/coograph-layout.yml").read_text(encoding="utf-8"),
+                         "name: mine\non: push\n")
+        self.assertTrue(any("kept (customized" in line for line in logs.output))
+
+    def test_template_workflow_runs_on_title_edits(self) -> None:
+        text = (LAYOUT_DIR / "coograph-layout.yml").read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("# coograph:managed"))
+        self.assertIn("types: [opened, synchronize, reopened, edited]", text)
 
 
 if __name__ == "__main__":

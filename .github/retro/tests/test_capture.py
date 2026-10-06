@@ -1137,12 +1137,17 @@ class GotchaHookTests(unittest.TestCase):
         self.assertEqual(rec["evidence"]["gotcha"], "expo-env")
 
     def test_no_match_is_silent(self) -> None:
-        for tool, inp in (("Edit", {"file_path": str(self.root / "README.md")}),
-                          ("Bash", {"command": "npm test"}),
-                          ("Read", {"file_path": str(self.root / "apps" / "mobile" / "app.json")})):
-            proc = self._run("q5", tool, "d", **inp)
+        # One tool_use_id per call: a shared id would let should_skip's dedupe
+        # return before matching runs, and the leg would pass vacuously.
+        for i, (tool, inp) in enumerate((("Edit", {"file_path": str(self.root / "README.md")}),
+                                         ("Bash", {"command": "npm test"}),
+                                         ("Read", {"file_path": str(self.root / "apps" / "mobile" / "app.json")}))):
+            proc = self._run("q5", tool, f"d{i}", **inp)
             self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, "", ""), tool)
         self.assertEqual(read_signals(self.root), [])
+        # positive control in the same session: the matching command does surface
+        proc = self._run("q5", "Bash", "d9", command="npx expo export")
+        self.assertIn("expo-env", proc.stdout)
 
     def test_invalid_entry_is_never_shown(self) -> None:
         (self.root / "GOTCHAS.md").write_text("## half\n- **paths:** `apps/**`\n", encoding="utf-8")

@@ -266,6 +266,9 @@ def _sync_retro(path: Path, prefix: str, dry_run: bool = False) -> int:
     return n
 
 
+WORKFLOW_MARKER = "coograph:managed"
+
+
 def _sync_layout(path: Path, prefix: str, dry_run: bool = False) -> int:
     """Copy .github/layout/ (checker, seed, CI assets; never tests/ or
     layout.json), seed or merge the project's layout.json, and refresh the
@@ -293,10 +296,20 @@ def _sync_layout(path: Path, prefix: str, dry_run: bool = False) -> int:
     workflow = path / ".github" / "workflows" / "coograph-layout.yml"
     workflow_src = src / "coograph-layout.yml"
     if workflow.exists() and workflow_src.exists():
-        if not dry_run:
-            shutil.copy2(workflow_src, workflow)
-        log.info("  %s.github/workflows/coograph-layout.yml  1 file", prefix)
-        n += 1
+        # Refreshed only while it still carries the managed marker: a project
+        # that deleted the line has edited the workflow and owns it now.
+        try:
+            managed = WORKFLOW_MARKER in workflow.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            managed = False
+        if managed:
+            if not dry_run:
+                shutil.copy2(workflow_src, workflow)
+            log.info("  %s.github/workflows/coograph-layout.yml  1 file", prefix)
+            n += 1
+        else:
+            log.info("  %s.github/workflows/coograph-layout.yml  kept (customized: no %s line)",
+                     prefix, WORKFLOW_MARKER)
     return n
 
 
