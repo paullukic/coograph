@@ -575,7 +575,7 @@ class GuardRootsStrictTests(Base):
         self.assertEqual(self._guard(["-apps/web/src/lib/other.ts"])[0], 0)
 
     def test_invalid_roots_exit_2(self) -> None:
-        for bad in ("apps/", [""], ["/"], [3]):
+        for bad in ("apps/", [""], ["/"], [3], ["./apps/web/"], ["apps\\web\\"], [" "], ["apps/**"]):
             with self.subTest(roots=bad):
                 cfg = json.loads(json.dumps(self.CONFIG))
                 cfg["guard"]["roots"] = bad

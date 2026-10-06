@@ -218,6 +218,50 @@ class SyncKeepsLocalEditsTests(_SyncCase):
         self.assertEqual(self.read(HOOK), "something else\n")
         self.assertEqual(len(self.kept_lines(out)), 1)
 
+    def test_unreadable_file_is_never_overwritten(self) -> None:
+        """A path sync cannot read is not "missing": it is left alone, and the
+        rest of the run goes on."""
+        (self.project / HOOK).mkdir(parents=True)  # reading a directory fails everywhere
+        out = self.run_sync()
+        self.assertTrue((self.project / HOOK).is_dir())
+        self.assertTrue(any(f"SKIPPED {HOOK}" in line for line in out))
+        self.assertEqual(self.read(SETTINGS), '{"v": 1}\n')  # the run continued
+
+    def test_unwritable_file_does_not_abort_the_run(self) -> None:
+        saved = sync.ProjectSync._write
+
+        def failing(state, src, dst, data, raw):
+            if dst.name == "warn-scope.py":
+                raise PermissionError("locked")
+            return saved(state, src, dst, data, raw)
+
+        sync.ProjectSync._write = failing
+        try:
+            out = self.run_sync()
+        finally:
+            sync.ProjectSync._write = saved
+        self.assertTrue(any(f"SKIPPED {HOOK}" in line for line in out))
+        self.assertFalse((self.project / HOOK).exists())
+        self.assertEqual(self.read(SETTINGS), '{"v": 1}\n')
+        manifest = json.loads((self.project / ".coograph/sync-manifest.json").read_text(encoding="utf-8"))
+        self.assertNotIn(HOOK, manifest["files"])  # never record what is not on disk
+
+    def test_history_reader_skips_non_blob_objects(self) -> None:
+        """git cat-file --batch prints a body for every object type; a commit
+        in the input must not knock the parser out of step."""
+        commit = _git(self.template, "rev-parse", "HEAD")
+        blob = _git(self.template, "rev-parse", f"HEAD:{HOOK}")
+        found = sync._History(self.template)._cat([commit, "0" * 40, blob])
+        self.assertEqual(found, {blob: b"hook v1\n"})
+
+    @unittest.skipIf(os.name == "nt", "no executable bit on Windows")
+    def test_mode_kept_on_rendered_write(self) -> None:
+        (self.template / HOOK).chmod(0o755)
+        self.write("openspec/config.yaml", "sync:\n  em_dash: hyphen\n")
+        self.release({HOOK: f"a {DASH} b\n"})
+        self.run_sync()
+        self.assertTrue(os.stat(self.project / HOOK).st_mode & stat.S_IXUSR)
+
 
 @unittest.skipUnless(shutil.which("git"), "git not installed")
 class EmDashSettingTests(_SyncCase):
@@ -253,6 +297,16 @@ class EmDashSettingTests(_SyncCase):
         out = self.run_sync()
         self.assertEqual(self.read(HOOK), "a - c\n")
         self.assertEqual(self.kept_lines(out), [])
+
+    def test_hyphen_leaves_binary_files_alone(self) -> None:
+        self.config("sync:\n  em_dash: hyphen\n")
+        blob = b"\xff\xfe" + DASH.encode("utf-8") + b"\x00"
+        path = self.template / ".claude/hooks/blob.bin"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(blob)
+        self.release({})
+        self.run_sync()
+        self.assertEqual((self.project / ".claude/hooks/blob.bin").read_bytes(), blob)
 
     def test_keep_copies_bytes(self) -> None:
         self.release({HOOK: f"a {DASH} b\n"})

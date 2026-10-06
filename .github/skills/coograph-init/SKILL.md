@@ -483,13 +483,13 @@ touch "$HOME/.config/git/ignore"
 
 The copied agent files already include a mandatory "Step 0 — Orient with Code-Graph" section with HARD-RULE wording (code-graph first, non-negotiable, only fall back when the DB is genuinely absent).
 
-Verify it is present in the target project by grepping each agent file for the literal string `MANDATORY — non-negotiable`:
+Verify it is present in the target project by grepping each agent file for `MANDATORY — non-negotiable` (or `MANDATORY - non-negotiable` in a project whose `openspec/config.yaml` sets `sync: em_dash: hyphen`):
 
 ```bash
-grep -L "MANDATORY — non-negotiable" <target>/.github/agents/*.agent.md
+grep -LE "MANDATORY (—|-) non-negotiable" <target>/.github/agents/*.agent.md
 ```
 
-Files returned (missing the marker) need the block restored — copy the Step 0 block from the matching file in `<template root>/.github/agents/` verbatim. Do not improvise the wording; the literal HARD RULE phrasing is what enforces the rule.
+Files returned (missing the marker) need the block restored — copy the Step 0 block from the matching file in `<template root>/.github/agents/` verbatim (with every `—` written as `-` under `em_dash: hyphen`, so sync still recognises the file as untouched). Do not improvise the wording; the literal HARD RULE phrasing is what enforces the rule.
 
 ## Step 8: Register in projects.json (repo mode only)
 

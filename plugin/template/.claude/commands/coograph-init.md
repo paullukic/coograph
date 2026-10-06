@@ -37,7 +37,7 @@ The full procedure is in `.github/skills/coograph-init/SKILL.md`. Follow those s
    - Build initial graph: `uv run --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py --build`
    - Optionally install git hooks for auto-updates
 
-7. **Agent references** (if code-graph enabled) — Verify every copied agent file still carries the `MANDATORY — non-negotiable` Step 0 block; restore it verbatim from the template root where missing. See SKILL.md § Step 7.
+7. **Agent references** (if code-graph enabled) — Verify every copied agent file still carries the `MANDATORY — non-negotiable` (or, under `sync: em_dash: hyphen`, `MANDATORY - non-negotiable`) Step 0 block; restore it verbatim from the template root where missing. See SKILL.md § Step 7.
 
 8. **Register in projects.json** (repo mode only — skipped for plugin installs) — Add the target project to `projects.json` in the coograph root (create with `{"projects": []}` if missing). Entry: `{ "path": "<absolute-path>", "tools": [...], "code_graph": true|false, "registered_at": "<date>" }`. Then run `./setup.sh` in the coograph root to ensure git hooks are configured for auto-sync on pull.
 

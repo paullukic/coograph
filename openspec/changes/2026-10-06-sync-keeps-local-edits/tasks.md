@@ -28,8 +28,17 @@
   - Files: `README.md`, `MIGRATION.md`, `.github/scripts/build-plugin.py` (`VERSION` 1.8.2), `plugin/`, `.claude-plugin/marketplace.json`
   - Acceptance: README sync section and settings note describe kept files; MIGRATION entry says what projects see and how to take upstream; `build-plugin.py --check` passes.
 
-- [ ] **8. Verification.**
+- [x] **8. Verification.**
   - Acceptance:
     - every CI job command in `.github/workflows/checks.yml` passes locally (invocation drift, re-init idempotency, plugin check, retro tests, layout tests + template budget, code-graph tests);
-    - `python .github/sync.py --dry-run` against the real registry runs clean and lists, for the project that motivated this, its edited files as `KEPT` (no writes);
+    - `python .github/sync.py --dry-run` against the real registry runs clean (7 projects, 0 KEPT: their working trees hold earlier upstream versions, recognised through history). On an export of the motivating project's committed `HEAD`: 45 KEPT without the em-dash setting, 15 with `em_dash: hyphen` (exactly its real local edits); a second real run writes 0;
     - review gate run on the diff, Critical/Warning findings fixed.
+
+## Review Fixes
+
+- [x] An unreadable or unwritable target is `SKIPPED`, never treated as missing and never recorded; one locked file no longer aborts the run (tests: directory in place of a file, a failing write).
+- [x] `_History._cat` skips the body of any object type and stops on a malformed size (test: commit sha and missing sha in the input).
+- [x] Init's agent-marker grep accepts `-` as well as an em dash, and the restore step writes the block normalised under `em_dash: hyphen`, so re-init cannot undo the setting.
+- [x] `warn-scope.py` resolves the root from `CLAUDE_PROJECT_DIR` like the other hooks (test: session cwd in a subdirectory).
+- [x] `guard.roots` rejects roots that can never match (`./x`, backslashes, globs, spaces).
+- [x] New tests: binary template file unchanged under `hyphen`; file mode kept on a rendered write (POSIX).

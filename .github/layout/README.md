@@ -119,7 +119,8 @@ PR with the skip marker in the PR title (CI passes the title as
 `guard.roots` (optional, absent by default) limits the guard to the parts of the
 repo it should watch, for example a monorepo's `apps/web/src/` and
 `packages/core/src/`. A changed path counts only when it equals a root or lies
-under it (a trailing `/` is optional); everything else is neither a failure nor
+under it (a trailing `/` is optional; a root is a plain repo-relative path as
+git prints it, no globs, no leading `./`); everything else is neither a failure nor
 uncovered, even when a doc's `paths:` covers it. Without `roots` the whole repo
 is checked, as before.
 

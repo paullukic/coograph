@@ -80,6 +80,12 @@ def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
+def _valid_root(value: object) -> bool:
+    """A repo-relative posix path as git prints it; anything else never matches."""
+    return (isinstance(value, str) and value == value.strip() and value.strip("/") != ""
+            and "\\" not in value and not value.startswith(("./", "/")) and "*" not in value)
+
+
 def validate(config: object) -> str | None:
     """Return the first invalid field, or None."""
     if not isinstance(config, dict):
@@ -103,8 +109,7 @@ def validate(config: object) -> str | None:
     if not isinstance(guard.get("skip_marker"), str) or not guard["skip_marker"]:
         return "guard.skip_marker"
     roots = guard.get("roots")  # optional: absent means the whole repo
-    if roots is not None and (
-            not isinstance(roots, list) or not all(isinstance(v, str) and v.strip("/") for v in roots)):
+    if roots is not None and (not isinstance(roots, list) or not all(_valid_root(v) for v in roots)):
         return "guard.roots"
     factor = config.get("structural_factor")
     if isinstance(factor, bool) or not isinstance(factor, (int, float)) or factor < 1:

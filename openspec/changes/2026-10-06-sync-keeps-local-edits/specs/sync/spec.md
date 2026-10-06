@@ -17,6 +17,8 @@ workflow) is decided by one rule, in order:
    it, copy that file over yours and sync again.`
 
 The manifest records the hash of what the project holds after the run for rules 1-4.
+A path sync cannot read, or cannot write, is left as it is and logged `SKIPPED`; it is
+never recorded, and the run continues with the next file and project.
 `--dry-run` decides and logs the same, and writes nothing.
 
 ### Scenario: untouched file refreshed
@@ -69,7 +71,8 @@ after resolving). An unregistered path exits 2 with a message.
 
 ## Requirement: layout guard roots and strict mode
 
-- `guard.roots` (optional list of non-empty strings) limits `--guard` to changed paths
+- `guard.roots` (optional list of plain repo-relative paths: no globs, backslashes,
+  leading `./` or `/`, surrounding spaces) limits `--guard` to changed paths
   equal to a root or under it; others are neither failures nor uncovered. Invalid
   values make the config invalid at `guard.roots` (exit 2).
 - `--strict` with `--guard`: when any changed path under the roots is covered by no
@@ -80,6 +83,8 @@ after resolving). An unregistered path exits 2 with a message.
 ## Requirement: scope hook precision
 
 `warn-scope.py`, on the `warn_model` channel (exit 0):
+- takes the project root from `CLAUDE_PROJECT_DIR` (the payload `cwd` otherwise), so
+  a session in a subdirectory is still scoped for the whole project;
 - is silent for targets outside the project root and for anything under `openspec/`;
 - picks the active change by the newest `tasks.md` mtime (directory mtime when no open
   change has a `tasks.md`);

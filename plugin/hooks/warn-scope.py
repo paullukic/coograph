@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -174,18 +175,21 @@ def main() -> int:
         return 0
 
     cwd = Path(payload.get("cwd") or ".")
+    # The project root, as the other hooks resolve it: a session whose cwd is a
+    # subdirectory still edits files of the whole project.
+    root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or cwd)
     target = Path(raw)
     if not target.is_absolute():
         target = cwd / target
     try:
-        rel = target.resolve().relative_to(cwd.resolve()).as_posix()
+        rel = target.resolve().relative_to(root.resolve()).as_posix()
     except (ValueError, OSError):
         return 0  # outside the project: no OpenSpec of this project scopes it
 
     if rel == "openspec" or rel.startswith("openspec/"):
         return 0  # writing or updating OpenSpec files is never out of scope
 
-    active = _active_openspec(cwd)
+    active = _active_openspec(root)
     if active is None:
         return 0
 
@@ -197,8 +201,8 @@ def main() -> int:
         return 0
 
     sid = _SAFE_SID.sub("", str(payload.get("session_id") or "unknown"))[:64] or "unknown"
-    if _already_warned(cwd, sid, rel):
-        _decide(payload, cwd, rel, "suppressed")
+    if _already_warned(root, sid, rel):
+        _decide(payload, root, rel, "suppressed")
         return 0
 
     warn_model(payload, (
@@ -206,7 +210,7 @@ def main() -> int:
         f"'{slug}' does not reference this path in tasks.md. "
         f"Confirm intent or update tasks.md."
     ))
-    _emit_signal(payload, cwd, rel, slug)
+    _emit_signal(payload, root, rel, slug)
     return 0
 
 

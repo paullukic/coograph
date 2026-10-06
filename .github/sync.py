@@ -229,11 +229,15 @@ class _History:
                 break
             header = data[pos:end].split()
             pos = end + 1
-            if len(header) != 3 or header[1] != b"blob":
-                continue  # "<sha> missing"
-            size = int(header[2])
-            found[header[0].decode()] = data[pos:pos + size]
-            pos += size + 1
+            if len(header) != 3:
+                continue  # "<sha> missing": no body follows
+            try:
+                size = int(header[2])
+            except ValueError:
+                break  # out of step with the stream: keep what was read
+            if header[1] == b"blob":
+                found[header[0].decode()] = data[pos:pos + size]
+            pos += size + 1  # skip the body of any object type
         return found
 
     def digests(self, template_rel: str, em_dash: str) -> set[str]:
@@ -304,10 +308,13 @@ class ProjectSync:
         raw_src = src.read_bytes()
         new = _render(raw_src, self.em_dash)
         new_digest = _digest(new)
+        exists = dst.exists()
         try:
-            current = dst.read_bytes() if dst.is_file() else None
-        except OSError:
-            current = None
+            current = dst.read_bytes() if exists else None
+        except OSError as e:
+            # Unreadable is not missing: never overwrite what cannot be checked.
+            log.warning("  SKIPPED %s (cannot read it: %s); left as is", rel, e)
+            return "kept"
         if current is not None:
             cur_digest = _digest(current)
             if cur_digest == new_digest:
@@ -335,7 +342,12 @@ class ProjectSync:
                             "over yours and sync again.", rel, upstream.as_posix())
                 return "kept"
         if not self.dry_run:
-            self._write(src, dst, new, raw=new is raw_src)
+            try:
+                self._write(src, dst, new, raw=new is raw_src)
+            except OSError as e:
+                # One locked file must not abort this project or the next ones.
+                log.warning("  SKIPPED %s (cannot write it: %s)", rel, e)
+                return "kept"
             self._record(rel, new_digest)
             self._drop_upstream_copy(rel)
         self.written += 1

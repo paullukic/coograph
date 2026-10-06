@@ -1795,6 +1795,20 @@ class WarnScopePrecisionTests(unittest.TestCase):
         proc = self._run(str(self.root / "nb" / "x.ipynb"), tool="NotebookEdit", key="notebook_path")
         _warned(self, proc, "[warn-scope] editing nb/x.ipynb")
 
+    def test_session_in_a_subdirectory_checks_the_whole_project(self) -> None:
+        """The root is CLAUDE_PROJECT_DIR, not the session cwd: a session started
+        in apps/web still edits, and is scoped for, the rest of the project."""
+        sub = self.root / "apps" / "web"
+        sub.mkdir(parents=True)
+        proc = subprocess.run(
+            [sys.executable, str(self.root / ".claude" / "hooks" / "warn-scope.py")],
+            input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Edit", "session_id": "sub1",
+                              "tool_use_id": "s1", "cwd": str(sub),
+                              "tool_input": {"file_path": str(self.root / "packages" / "core" / "x.ts")}}),
+            capture_output=True, text=True, env=_isolated_env(self.root, self.base), cwd=str(sub),
+        )
+        _warned(self, proc, "[warn-scope] editing packages/core/x.ts")
+
 
 class WarnHooksNeverUseStderrTests(unittest.TestCase):
     """No warn hook goes back to the channel the model cannot read."""
