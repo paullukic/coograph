@@ -741,8 +741,16 @@ class SyncTests(Base):
         self.sync.sync_project(self._project())
         self.assertFalse(wf.exists())
         self.p.write(".github/workflows/coograph-layout.yml", "# coograph:managed (old)\nold\n")
+        # As an earlier sync left it: recorded in the manifest, so not a local edit.
+        manifest = json.loads((self.p.root / ".coograph/sync-manifest.json").read_text(encoding="utf-8"))
+        manifest["files"][".github/workflows/coograph-layout.yml"] = self.sync._digest(wf.read_bytes())
+        (self.p.root / ".coograph/sync-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         self.sync.sync_project(self._project())
         self.assertEqual(wf.read_bytes(), (LAYOUT_DIR / "coograph-layout.yml").read_bytes())
+        # Edited with the marker kept: a local edit, kept.
+        self.p.write(".github/workflows/coograph-layout.yml", "# coograph:managed\nmine\n")
+        self.sync.sync_project(self._project())
+        self.assertEqual(wf.read_text(encoding="utf-8"), "# coograph:managed\nmine\n")
 
     def test_customized_workflow_is_kept(self) -> None:
         self.p.write(".github/workflows/coograph-layout.yml", "name: mine\non: push\n")

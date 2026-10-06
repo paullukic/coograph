@@ -189,12 +189,12 @@ Lifecycle hooks in `.claude/hooks/`, wired via `.claude/settings.json`. They run
 | **`block-generated.py`** | PreToolUse (Edit/Write) | **Blocks** edits to files under `generated/`, `dist/`, `build/`, `.next/`, `node_modules/`, or anything with `@generated` / `DO NOT EDIT` / `AUTO-GENERATED` in the first 5 lines. Protects codegen output from accidental hand-edits. |
 | **`log-bash.py`** | PreToolUse (Bash) | Appends every bash command to `.coograph/session.log` *and* `.coograph/sessions/<session_id>.log` (both gitignored, per-project). Two-layer audit trail. Codex CLI + OpenCode variants write to the same files — see [Bash audit log](#bash-audit-log) below. |
 | **`report-graph.py`** | SessionStart | Reports code-graph state at session start: `[code-graph] N nodes, M edges, SIZEkb, updated Xh ago`. Prints a rebuild hint if `graph.db` is missing but the server is present. |
-| **`warn-scope.py`** | PreToolUse (Edit/Write) | If an active OpenSpec exists, **warns** (non-blocking) when editing a file not referenced in its `tasks.md`. Surfaces scope creep without stopping work. Records the warning as a Retro signal. |
+| **`warn-scope.py`** | PreToolUse (Edit/Write/NotebookEdit) | If an active OpenSpec exists (the open change whose `tasks.md` changed last), **warns** (non-blocking) when editing a file its `tasks.md` does not reference; a backticked path ending in `/` covers everything under it. Once per path per session; silent outside the project and under `openspec/`. Surfaces scope creep without stopping work. Records the warning as a Retro signal. |
 | **`no-new-deps-warn.py`** | PreToolUse (Bash/PowerShell, Edit/Write) | **Warns** (non-blocking) the first time a session installs a package or edits a dependency manifest. Silent for restores (`npm install` bare, `pip install -r`, `pip install -e .`) because it calls the same `dep_command` the `new-dependency` detector uses — the two cannot disagree. Emits no signal of its own: the detector already records the violation, and a second copy would be counted twice. |
 | **`defect-warn.py`** | PreToolUse (Bash/PowerShell, Edit/Write, Skill/Task), UserPromptSubmit | **Warns** (non-blocking) once, at `git commit`, when a session edited source and no review ran. A proxy for the `defect` rule: a hook cannot see a future fix commit, so it flags the review that was skipped. Counts all three ways a review starts — the Skill tool, a delegation to the reviewer agent, and a typed `/coograph-review`. Docs and `openspec/` edits do not count. Emits no signal of its own, for the same reason as above. |
 | **`capture-signals.py`** | SessionEnd, SessionStart | On SessionEnd, turns the session transcript into Retro signals (`.coograph/signals.jsonl`, metadata only). On SessionStart, catches up transcripts from killed sessions (time-boxed) and prints `[retro] N sessions captured, K rules over threshold, run /coograph-retro`. See [Retro](#retro). |
 
-Personal or machine-specific overrides go in `.claude/settings.local.json` (gitignored, never synced). `.claude/settings.json` is template-managed and gets overwritten on sync.
+Personal or machine-specific overrides go in `.claude/settings.local.json` (gitignored, never synced). `.claude/settings.json` is template-managed: sync refreshes it while it is untouched, and keeps it (with a `KEPT` line) once you edit it.
 
 ### Bash audit log
 
@@ -362,10 +362,21 @@ Template updates propagate to every registered project automatically.
 | `.github/code-graph/` | |
 | `.claude/commands/project/` | |
 | `.claude/hooks/` | |
-| `.claude/settings.json` | |
+| `.claude/settings.json` | `.coograph/` (sync manifest, upstream copies of kept files) |
 | `AGENTS.md` | |
 
-Sync output appends to `.github/sync.log`.
+Sync output appends to `.github/sync.log`. `python3 .github/sync.py --dry-run` shows what a sync would do without writing; `--project PATH` syncs one registered project.
+
+**Local edits survive.** Sync refreshes a template-managed file only while the project has not edited it: it records what it wrote in `.coograph/sync-manifest.json`, and a file that matches neither that record nor any version coograph ever shipped is a local edit. Sync keeps it, writes the upstream version to `.coograph/upstream/<path>`, and logs `KEPT <path> (local edit)`. To take the upstream version, copy that file over yours and sync again. A retro hook upgrade or a local fix in `.claude/hooks/` therefore stays put; the KEPT line reminds you that upstream moved on.
+
+**House style for synced files.** A project that writes no em dashes can set, in its `openspec/config.yaml`:
+
+```yaml
+sync:
+  em_dash: hyphen   # keep (default) | hyphen
+```
+
+Sync then replaces U+2014 with `-` in every text file it writes, and compares against the normalised upstream, so those files keep receiving updates instead of being reported as edits. It also rewrites em dashes inside string literals of synced scripts; none of coograph's scripts match on one.
 
 **Migrations:** when a template update changes a user-owned file (`CLAUDE.md`, `.github/copilot-instructions.md`, `openspec/config.yaml`), sync skips it to preserve your customizations. Any such change is recorded in [MIGRATION.md](MIGRATION.md) with the exact text to apply by hand. Check that file after every `git pull` in coograph.
 
