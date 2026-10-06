@@ -1725,6 +1725,77 @@ class WarnHookWithoutGuardTests(unittest.TestCase):
             self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, "", ""))
 
 
+class WarnScopePrecisionTests(unittest.TestCase):
+    """warn-scope warns only where a scope applies, and once per path per session."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name)
+        self.root = make_project(self.base / "proj", active_openspec=True)
+        self.tasks = self.root / "openspec" / "changes" / "2026-09-01-active" / "tasks.md"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _run(self, path: str, sid: str = "sp1", tool: str = "Edit", key: str = "file_path",
+             tool_use_id: str = "u1") -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(self.root / ".claude" / "hooks" / "warn-scope.py")],
+            input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool, "session_id": sid,
+                              "tool_use_id": tool_use_id, "cwd": str(self.root),
+                              "tool_input": {key: path}}),
+            capture_output=True, text=True, env=_isolated_env(self.root, self.base), cwd=str(self.root),
+        )
+
+    def _silent(self, proc: subprocess.CompletedProcess) -> None:
+        self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, "", ""))
+
+    def test_outside_project_root_is_silent(self) -> None:
+        outside = self.base / "elsewhere" / "x.ts"
+        self._silent(self._run(str(outside)))
+        self.assertEqual(read_signals(self.root), [])
+
+    def test_any_openspec_path_is_silent(self) -> None:
+        other = self.root / "openspec" / "changes" / "2026-10-01-next" / "proposal.md"
+        self._silent(self._run(str(other)))
+
+    def test_relative_path_resolved_against_cwd(self) -> None:
+        self._silent(self._run("src/a.ts", tool_use_id="r1"))
+        _warned(self, self._run("src/b.ts", tool_use_id="r2"), "[warn-scope] editing src/b.ts")
+
+    def test_directory_token_covers_files_under_it(self) -> None:
+        self.tasks.write_text("- [ ] rework `src/feature/`\n", encoding="utf-8")
+        self._silent(self._run(str(self.root / "src" / "feature" / "deep" / "x.ts"), tool_use_id="d1"))
+        _warned(self, self._run(str(self.root / "src" / "other.ts"), tool_use_id="d2"), "[warn-scope]")
+
+    def test_active_change_is_newest_tasks_md(self) -> None:
+        newer = self.root / "openspec" / "changes" / "2026-08-01-older-name"
+        newer.mkdir()
+        (newer / "tasks.md").write_text("- [ ] edit `src/b.ts`\n", encoding="utf-8")
+        old = time.time() - 3600
+        os.utime(self.tasks, (old, old))
+        # A notes/ file makes the other directory newer; its tasks.md is not.
+        (self.tasks.parent / "notes").mkdir()
+        self._silent(self._run(str(self.root / "src" / "b.ts")))
+
+    def test_warns_once_per_path_then_suppressed(self) -> None:
+        target = str(self.root / "src" / "b.ts")
+        _warned(self, self._run(target, tool_use_id="w1"), "[warn-scope]")
+        self._silent(self._run(target, tool_use_id="w2"))
+        _warned(self, self._run(str(self.root / "src" / "c.ts"), tool_use_id="w3"), "[warn-scope]")
+        _warned(self, self._run(target, sid="sp2", tool_use_id="w4"), "[warn-scope]")
+        recs = read_signals(self.root)
+        violations = [r for r in recs if r["kind"] == "violation"]
+        actions = [(r["evidence"]["tool_use_id"], r["evidence"]["action"])
+                   for r in recs if r["kind"] == "decision"]
+        self.assertEqual(len(violations), 3)
+        self.assertEqual(actions, [("w1", "warned"), ("w2", "suppressed"), ("w3", "warned"), ("w4", "warned")])
+
+    def test_notebook_edit_is_checked(self) -> None:
+        proc = self._run(str(self.root / "nb" / "x.ipynb"), tool="NotebookEdit", key="notebook_path")
+        _warned(self, proc, "[warn-scope] editing nb/x.ipynb")
+
+
 class WarnHooksNeverUseStderrTests(unittest.TestCase):
     """No warn hook goes back to the channel the model cannot read."""
 

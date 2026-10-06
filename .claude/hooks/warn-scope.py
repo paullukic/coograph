@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 """warn-scope: PreToolUse hook that warns on edits outside the active OpenSpec.
 
-Finds the most-recently-modified OpenSpec in openspec/changes/<slug>/ (not
-archive). Parses its tasks.md for file paths referenced in backticks, then
-warns if the current edit target isn't among them.
+The active OpenSpec is the open change in openspec/changes/<slug>/ (not
+archive) whose tasks.md was modified most recently (the change directory's
+own mtime only when no open change has a tasks.md). Paths referenced in
+backticks in that tasks.md are in scope; a token ending in '/' covers every
+file under it. Warns if the current edit target isn't covered.
+
+Silent for: no active OpenSpec, a tasks.md with no paths, targets outside the
+project root, and anything under openspec/. Warns once per path per session
+(marker .coograph/markers/scope-warned-<sid>); a repeat records a
+`suppressed` decision and no violation.
 
 Never blocks: the warning goes to the model as additionalContext (and to the
-user as systemMessage) with exit 0, without stopping the tool call. Silent
-when no active OpenSpec exists.
+user as systemMessage) with exit 0, without stopping the tool call.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -46,6 +53,9 @@ PATH_SUFFIXES = {
     ".json", ".yaml", ".yml", ".toml", ".md", ".sh",
     ".css", ".scss", ".sql",
 }
+EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+MARKER_DIR = "markers"
+_SAFE_SID = re.compile(r"[^A-Za-z0-9_-]")
 
 
 def _strip_dot_slash(token: str) -> str:
@@ -72,6 +82,13 @@ def _looks_like_path(token: str) -> bool:
     return suffix in PATH_SUFFIXES
 
 
+def _tasks_mtime(d: Path) -> float:
+    try:
+        return (d / "tasks.md").stat().st_mtime
+    except OSError:
+        return -1.0
+
+
 def _active_openspec(cwd: Path) -> tuple[str, set[str]] | None:
     changes_dir = cwd / "openspec" / "changes"
     if not changes_dir.exists():
@@ -84,7 +101,14 @@ def _active_openspec(cwd: Path) -> tuple[str, set[str]] | None:
     if not candidates:
         return None
 
-    active = max(candidates, key=lambda d: d.stat().st_mtime)
+    # The change being worked on is the one whose tasks.md moved last. A
+    # directory's own mtime changes whenever any file is added inside it
+    # (notes/, a new spec), which picks the wrong change.
+    with_tasks = [d for d in candidates if _tasks_mtime(d) >= 0]
+    if with_tasks:
+        active = max(with_tasks, key=_tasks_mtime)
+    else:
+        active = max(candidates, key=lambda d: d.stat().st_mtime)
     tasks = active / "tasks.md"
     if not tasks.exists():
         return active.name, set()
@@ -102,13 +126,44 @@ def _active_openspec(cwd: Path) -> tuple[str, set[str]] | None:
     return active.name, paths
 
 
+def _covered(rel: str, target_name: str, scope: set[str]) -> bool:
+    for scoped in scope:
+        if rel == scoped or rel.endswith("/" + scoped) or scoped.endswith("/" + rel):
+            return True
+        if scoped.endswith("/") and rel.startswith(scoped):
+            return True  # a directory token covers everything under it
+        if Path(scoped).name == target_name:
+            return True
+    return False
+
+
+def _already_warned(cwd: Path, sid: str, rel: str) -> bool:
+    """True when this path was warned about earlier in the session; else
+    remember it. An unwritable .coograph/ degrades to warning every time."""
+    marker = cwd / ".coograph" / MARKER_DIR / f"scope-warned-{sid}"
+    key = hashlib.sha1(rel.encode("utf-8", "replace")).hexdigest()[:12]
+    try:
+        seen = set(marker.read_text(encoding="utf-8").split())
+    except OSError:
+        seen = set()
+    if key in seen:
+        return True
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        with marker.open("a", encoding="utf-8") as fh:
+            fh.write(key + "\n")
+    except OSError:
+        pass
+    return False
+
+
 def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except json.JSONDecodeError:
         return 0
 
-    if payload.get("tool_name") not in {"Edit", "Write", "MultiEdit"}:
+    if payload.get("tool_name") not in EDIT_TOOLS:
         return 0
 
     if should_skip(payload, __file__):
@@ -120,29 +175,31 @@ def main() -> int:
 
     cwd = Path(payload.get("cwd") or ".")
     target = Path(raw)
+    if not target.is_absolute():
+        target = cwd / target
     try:
         rel = target.resolve().relative_to(cwd.resolve()).as_posix()
     except (ValueError, OSError):
-        rel = target.as_posix()
+        return 0  # outside the project: no OpenSpec of this project scopes it
+
+    if rel == "openspec" or rel.startswith("openspec/"):
+        return 0  # writing or updating OpenSpec files is never out of scope
 
     active = _active_openspec(cwd)
     if active is None:
         return 0
 
     slug, scope = active
-
-    if rel.startswith(f"openspec/changes/{slug}"):
-        return 0
-
     if not scope:
         return 0
 
-    target_name = target.name
-    for scoped in scope:
-        if rel == scoped or rel.endswith("/" + scoped) or scoped.endswith("/" + rel):
-            return 0
-        if Path(scoped).name == target_name:
-            return 0
+    if _covered(rel, target.name, scope):
+        return 0
+
+    sid = _SAFE_SID.sub("", str(payload.get("session_id") or "unknown"))[:64] or "unknown"
+    if _already_warned(cwd, sid, rel):
+        _decide(payload, cwd, rel, "suppressed")
+        return 0
 
     warn_model(payload, (
         f"[warn-scope] editing {rel} but active OpenSpec "
@@ -170,8 +227,14 @@ def _emit_signal(payload: dict, cwd: Path, rel: str, slug: str) -> None:
         ))
     except Exception:
         pass
+    _decide(payload, cwd, rel, "warned")
+
+
+def _decide(payload: dict, cwd: Path, rel: str, action: str) -> None:
+    if signals is None:
+        return
     try:
-        signals.emit_decision(cwd, payload, "scope", "warned", __file__, rel)
+        signals.emit_decision(cwd, payload, "scope", action, __file__, rel)
     except Exception:
         pass
 
