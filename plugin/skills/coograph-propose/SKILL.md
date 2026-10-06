@@ -22,7 +22,7 @@ From their description, derive a kebab-case slug (e.g., "add user auth"). Wait f
 ## Step 2: Investigate the codebase
 
 Before writing anything:
-1. Read `.github/copilot-instructions.md` for conventions and stack.
+1. Read `AGENTS.md` § Hard rules and `.github/copilot-instructions.md` (when `AGENTS.md` has no Hard rules section, `.github/copilot-instructions.md` holds them all) for rules, conventions and stack, if not already loaded.
 2. Search for related files, existing patterns, integration points, and risks relevant to this change.
 3. Identify which files will likely be modified or created.
 

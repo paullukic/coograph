@@ -102,6 +102,10 @@ def validate(config: object) -> str | None:
         return "guard.ignore"
     if not isinstance(guard.get("skip_marker"), str) or not guard["skip_marker"]:
         return "guard.skip_marker"
+    roots = guard.get("roots")  # optional: absent means the whole repo
+    if roots is not None and (
+            not isinstance(roots, list) or not all(isinstance(v, str) and v.strip("/") for v in roots)):
+        return "guard.roots"
     factor = config.get("structural_factor")
     if isinstance(factor, bool) or not isinstance(factor, (int, float)) or factor < 1:
         return "structural_factor"
@@ -691,9 +695,11 @@ def measure(cwd: Path, config: dict, source: str = "") -> dict:
 # Guard
 # ---------------------------------------------------------------------------
 
-def changed_files(cwd: Path, base: str, head: str) -> list[str]:
+def changed_files(cwd: Path, base: str, head: str, deleted: bool = False) -> list[str]:
+    """Paths changed between BASE and HEAD; with deleted=True, only deletions."""
     out = subprocess.run(
-        ["git", "-C", str(cwd), "diff", "--name-only", f"{base}...{head}"],
+        ["git", "-C", str(cwd), "diff", "--name-only", *(["--diff-filter=D"] if deleted else []),
+         f"{base}...{head}"],
         capture_output=True, text=True, timeout=60,
     )
     if out.returncode != 0:
@@ -701,7 +707,24 @@ def changed_files(cwd: Path, base: str, head: str) -> list[str]:
     return [l.strip() for l in out.stdout.splitlines() if l.strip()]
 
 
-def guard(cwd: Path, config: dict, changed: list[str]) -> dict:
+def under_roots(rel: str, roots: list[str]) -> bool:
+    """True when no roots are set, or rel is a root or lies under one."""
+    if not roots:
+        return True
+    for root in roots:
+        r = root.strip("/")
+        if rel == r or rel.startswith(r + "/"):
+            return True
+    return False
+
+
+def guard(cwd: Path, config: dict, changed: list[str], deleted: list[str] | None = None) -> dict:
+    """Map changed paths to covering docs.
+
+    Only paths under `guard.roots` (when set) are checked. A deleted path needs
+    no doc of its own, so it is never `uncovered`; a deleted covered path still
+    needs its doc updated.
+    """
     files = list_files(cwd)
     always, _ = resolve_always_loaded(cwd, config["always_loaded"])
     doc_files = tier_files(cwd, config["docs"], files)
@@ -717,14 +740,19 @@ def guard(cwd: Path, config: dict, changed: list[str]) -> dict:
     # `stale_gotchas` instead.
     covers = [(rel, frontmatter_paths(_read(cwd / rel)) or []) for rel in doc_files]
 
+    roots = config["guard"].get("roots") or []
+    gone = set(deleted or [])
     changed_set = set(changed)
     failures, uncovered, ok = [], [], []
     for rel in changed:
+        if not under_roots(rel, roots):
+            continue
         if rel in instruction or any(path_matches(p, rel) for p in config["guard"]["ignore"]):
             continue
         covering = sorted({doc for doc, pats in covers if any(path_matches(p, rel) for p in pats)})
         if not covering:
-            uncovered.append(rel)
+            if rel not in gone:
+                uncovered.append(rel)
         elif changed_set.isdisjoint(covering):
             failures.append({"path": rel, "docs": covering})
         else:
@@ -771,7 +799,11 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--json", action="store_true")
     group.add_argument("--guard", nargs=2, metavar=("BASE", "HEAD"))
     group.add_argument("--merge-seed", metavar="SEED", nargs="?", const=str(DEFAULT_SEED))
+    parser.add_argument("--strict", action="store_true",
+                        help="with --guard: also fail when a changed path no doc covers (UNCOVERED)")
     args = parser.parse_args(argv)
+    if args.strict and not args.guard:
+        parser.error("--strict needs --guard")
     cwd = Path(args.cwd or os.getcwd()).resolve()
 
     if args.merge_seed is not None:
@@ -800,17 +832,23 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         try:
             changed = changed_files(cwd, *args.guard)
+            deleted = changed_files(cwd, *args.guard, deleted=True)
         except (OSError, RuntimeError, subprocess.SubprocessError) as e:
             print(f"layout guard: {e}", file=sys.stderr)
             return 2
-        result = guard(cwd, config, changed)
+        result = guard(cwd, config, changed, deleted)
         for f in result["failures"]:
             print(f"FAIL  {f['path']} -> {', '.join(f['docs'])}")
         for u in result["uncovered"]:
-            print(f"uncovered  {u}")
+            print(f"{'UNCOVERED' if args.strict else 'uncovered'}  {u}")
         if result["failures"]:
             print(f"layout guard: {len(result['failures'])} covered path(s) changed without their doc. "
                   f"Update the doc, or put {config['guard']['skip_marker']} in the PR title.")
+            return 1
+        if args.strict and result["uncovered"]:
+            print(f"layout guard: {len(result['uncovered'])} changed path(s) no doc covers. "
+                  f"Add them to a doc's paths: frontmatter, or put "
+                  f"{config['guard']['skip_marker']} in the PR title.")
             return 1
         print(f"layout guard: ok ({len(result['covered_ok'])} covered, {len(result['uncovered'])} uncovered)")
         return 0

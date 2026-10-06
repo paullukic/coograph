@@ -16,7 +16,7 @@ Review the changes in scope for spec compliance, convention violations, logic bu
 
 ## Phase 1 — Anchor & Scope
 
-1. Read `.github/copilot-instructions.md` (the single source of truth for project conventions).
+1. Read `AGENTS.md` § Hard rules and `.github/copilot-instructions.md` (when `AGENTS.md` has no Hard rules section, `.github/copilot-instructions.md` holds them all): the binding rules and project conventions. Also read `.github/instructions/review.instructions.md` when it exists (review depth).
 2. Run `git diff origin/main --stat` to list changed files with line counts.
 3. If the project uses OpenSpec, read the active change's `proposal.md`, `specs/`, and `tasks.md`.
 

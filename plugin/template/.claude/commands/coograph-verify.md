@@ -13,7 +13,7 @@ Verify that the described work is complete and correct. Provide evidence for eve
 
 ### Step 1 — Define
 
-Read `.github/copilot-instructions.md` for build/test commands. Identify:
+Read `AGENTS.md` § Commands (`.github/copilot-instructions.md` when `AGENTS.md` has no Commands section) for build/test commands. Identify:
 - What are the acceptance criteria?
 - What tests prove this works?
 - What edge cases matter?
@@ -85,7 +85,7 @@ APPROVE | REQUEST_CHANGES | NEEDS_MORE_EVIDENCE
 - Run commands yourself. Do not trust claims without output.
 - Fresh evidence only — output from before the latest change is stale and invalid.
 - "It should work" is not evidence.
-- Follow `.github/copilot-instructions.md` for project build/test commands.
+- Follow `AGENTS.md` § Commands (or `.github/copilot-instructions.md`) for project build/test commands.
 
 ## Failure Modes to Avoid
 
