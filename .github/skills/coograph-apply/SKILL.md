@@ -73,7 +73,7 @@ Invoke `@Reviewer` (VS Code) or run `/coograph-review` (Claude Code). When the c
 
 ## Step 7: Build verification
 
-Read `.github/copilot-instructions.md` for the project's build/quality commands. Run them in documented order. Fix failures and re-run.
+Read `AGENTS.md` § Commands (`.github/copilot-instructions.md` when `AGENTS.md` has no Commands section) for the project's build/quality commands. Run them in documented order. Fix failures and re-run.
 
 If commands are not documented, ask the user.
 

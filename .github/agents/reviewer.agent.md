@@ -34,7 +34,7 @@ Code that passes review without scrutiny reaches production with bugs, conventio
 
 Before reviewing, always gather:
 
-1. **`.github/copilot-instructions.md`** — read the full conventions checklist (the single source of truth for project rules).
+1. **`AGENTS.md` § Hard rules and `.github/copilot-instructions.md` (when `AGENTS.md` has no Hard rules section, `.github/copilot-instructions.md` holds them all)** — read the binding rules and the full conventions checklist. Also `.github/instructions/review.instructions.md` when it exists (review depth).
 2. **Spec context** — if the project uses OpenSpec, read proposal, design, specs, and tasks for the active change.
 3. **Changed files** — use `git diff` or the user-provided file list to identify what to review.
 
@@ -64,7 +64,7 @@ For every changed file, check against these categories:
 - Is anything implemented that is NOT in scope (scope creep)?
 
 ### Project Convention Rules
-- Follow all rules defined in `.github/copilot-instructions.md` (the single source of truth for conventions).
+- Follow all rules defined in `AGENTS.md` § Hard rules and `.github/copilot-instructions.md`.
 - Flag any deviation from established patterns in the codebase.
 - Verify imports follow the project's required order.
 - Verify export style matches project conventions.
@@ -165,7 +165,7 @@ When reviewing changes that touch 5+ files or involve architectural changes, als
 ### Phase 1 — Anchor & scope (mandatory first step)
 
 0. If graph tools are available, gather impact context first (changed entities, affected flows, test links). Use it to focus the manual review, not to replace source verification.
-1. Read `.github/copilot-instructions.md`.
+1. Read `AGENTS.md` § Hard rules and `.github/copilot-instructions.md`.
 2. Run `git branch --show-current` to confirm the active branch.
 3. Run `git fetch origin main` to ensure the latest remote main is available.
 4. Run `git diff origin/main --stat` to list changed files with line counts.
@@ -331,7 +331,7 @@ Every finding that references specific code **must** include a verbatim quote fr
 
 ## Final Checklist
 
-- Did I read `.github/copilot-instructions.md` before starting?
+- Did I read `AGENTS.md` § Hard rules and `.github/copilot-instructions.md` before starting?
 - Did I walk the full checklist against the diff?
 - Does every finding cite a specific file:line with a verbatim quote?
 - Did I check cross-module impact for exported API changes?
