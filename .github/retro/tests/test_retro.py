@@ -399,6 +399,54 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(report["over_budget"])
         self.assertIn("OVER budget", md)
 
+    def test_layout_measures_imports_and_reports_sections(self) -> None:
+        (self.root / "CLAUDE.md").write_bytes(b"@AGENTS.md\n")  # bytes: exact size on Windows too
+        (self.root / "AGENTS.md").write_text("a" * 4000, encoding="utf-8")
+        (self.root / "apps" / "web").mkdir(parents=True)
+        (self.root / "apps" / "web" / "AGENTS.md").write_text(
+            "## Login (openspec 2026-09-01-login)\n## Signup (2026-09-03)\n## Reset (2026-09-05)\n" + "x" * 9000,
+            encoding="utf-8")
+        report, md = self._report()
+        self.assertEqual(report["instruction_token_budget"], 9000)
+        self.assertEqual(sorted(r["file"] for r in report["instruction_tokens"]), ["AGENTS.md", "CLAUDE.md"])
+        self.assertEqual(report["instruction_tokens_total"], 1000 + len("@AGENTS.md\n") // 4)
+        self.assertTrue(report["layout"]["structural"])
+        self.assertIn("## Instruction layout", md)
+        self.assertIn("apps/web/AGENTS.md: 3", md)
+        self.assertIn("/coograph-docs-restructure", md)
+        self.assertIn("## Gotchas", md)
+
+    def test_without_layout_report_keys_are_unchanged(self) -> None:
+        shutil.rmtree(self.root / ".github" / "layout")
+        report, md = self._report()
+        self.assertNotIn("layout", report)
+        self.assertNotIn("gotchas", report)
+        self.assertEqual(report["instruction_token_budget"], 8000)
+        self.assertNotIn("## Instruction layout", md)
+
+    def test_gotcha_decisions_never_touch_rules(self) -> None:
+        _session(self.root, "g1", "2026-09-01", violations=1)
+        before, _ = self._report()
+        (self.root / "GOTCHAS.md").write_text(
+            "## expo-env\n- **Symptom:** s\n- **Cause:** c\n- **Fix / rule:** f\n"
+            "- **paths:** `apps/**`\n- **commands:** `expo export`\n- **confirmed:** 2026-10-01\n",
+            encoding="utf-8")
+        for i in range(5):
+            sig.emit_decision(self.root, {"session_id": "g1", "tool_use_id": f"t{i}"}, "gotchas",
+                              "surfaced", "gotcha-surface.py", "", gotcha="expo-env")
+        sig.emit(self.root, sig.make_record(
+            tool="claude-code", session_id="g1", kind="event", rule="none", detector="build-retry",
+            confidence="deterministic", origin="transcript",
+            evidence={"program": "expo", "hash": "abc", "runs": 3, "errors": 2}))
+        after, md = self._report()
+        strip = lambda rep: [{k: v for k, v in e.items() if k != "before_after"} for e in rep["per_rule"]]
+        self.assertEqual(strip(before), strip(after))
+        self.assertEqual(after["gotchas"], [{
+            "id": "expo-env", "surfaced": 5, "sessions": 1, "episodes": 1, "retry_sessions": 1,
+            "in_gotchas_md": True,
+        }])
+        self.assertIn("| expo-env | 5 | 1 | 1 | 1 |", md)
+
     def test_end_to_end_from_transcript(self) -> None:
         t = Transcript("e2e")
         t.result(t.tool("Grep", pattern="a"))

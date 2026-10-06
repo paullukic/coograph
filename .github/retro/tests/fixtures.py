@@ -18,6 +18,7 @@ REPO = HERE.parent.parent.parent
 HOOKS = REPO / ".claude" / "hooks"
 RETRO = REPO / ".github" / "retro"
 SEED = RETRO / "rules.seed.json"
+LAYOUT = REPO / ".github" / "layout"
 
 SENTINEL = "SECRET_SENTINEL_9f3a"
 
@@ -115,7 +116,8 @@ def make_project(root: Path, *, graph: bool = True, rules: bool = True,
     (root / ".claude" / "hooks").mkdir(parents=True, exist_ok=True)
     for name in ("_coograph_signals.py", "_coograph_guard.py", "capture-signals.py",
                  "warn-scope.py", "block-generated.py",
-                 "no-new-deps-warn.py", "defect-warn.py", "openspec-gate-warn.py"):
+                 "no-new-deps-warn.py", "defect-warn.py", "openspec-gate-warn.py",
+                 "gotcha-surface.py"):
         shutil.copyfile(HOOKS / name, root / ".claude" / "hooks" / name)
     (root / ".github" / "skills" / "coograph-init").mkdir(parents=True, exist_ok=True)
     (root / ".github" / "skills" / "coograph-init" / "SKILL.md").write_text("marker\n")
@@ -124,6 +126,9 @@ def make_project(root: Path, *, graph: bool = True, rules: bool = True,
         shutil.copyfile(RETRO / name, root / ".github" / "retro" / name)
     if rules:
         shutil.copyfile(SEED, root / ".github" / "retro" / "rules.json")
+    (root / ".github" / "layout").mkdir(parents=True, exist_ok=True)
+    for name in ("layout.py", "layout.seed.json"):
+        shutil.copyfile(LAYOUT / name, root / ".github" / "layout" / name)
     if graph:
         (root / ".code-graph").mkdir(exist_ok=True)
         (root / ".code-graph" / "graph.db").write_bytes(b"")

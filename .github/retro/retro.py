@@ -40,6 +40,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_SEED = SCRIPT_DIR / "rules.seed.json"
 
 INSTRUCTION_FILES = ["CLAUDE.md", "AGENTS.md", ".github/copilot-instructions.md"]
+# Programs that run another program: their build-retry record names the runner.
+RUNNERS = {"npx", "pnpm", "pnpx", "yarn", "bunx", "bun", "npm", "uv", "uvx", "poetry", "pipenv", "python", "python3"}
 REVIEW_SKILLS = {"coograph-review", "coograph-verify", "coograph-ultra-review", "coograph:coograph-review", "coograph:coograph-verify", "coograph:coograph-ultra-review"}
 BACKTICK_PATH_RE = re.compile(r"`([^`\s]+)`")
 PATH_SUFFIXES = {
@@ -71,6 +73,29 @@ def _import_signals(cwd: Path):
             except ImportError:
                 continue
     return None
+
+
+def _import_layout(cwd: Path):
+    """The layout checker (.github/layout/layout.py), or None when not installed.
+
+    With it, the instruction budget is the always-loaded tier with @ imports
+    resolved, the same number `layout.py --budget` prints. Without it, retro
+    keeps measuring INSTRUCTION_FILES as before.
+
+    Only the measured project's own copy counts: a checkout that has
+    .github/layout/ must not measure a project that has none with it.
+    """
+    import importlib.util
+    path = cwd / ".github" / "layout" / "layout.py"
+    if not path.is_file():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("coograph_layout", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +184,51 @@ def instruction_tokens(cwd: Path) -> tuple[list[dict], int]:
             total += n
             rows.append({"file": f.relative_to(cwd).as_posix(), "approx_tokens": n})
     return rows, total
+
+
+def layout_report(cwd: Path, layout) -> dict | None:
+    """The layout measurement, or None when the config is unreadable."""
+    try:
+        config, source = layout.load_config(cwd)
+        return layout.measure(cwd, config, source)
+    except Exception:
+        return None
+
+
+def _gotcha_activity(sig, records: list[dict], measurement: dict) -> list[dict]:
+    """Per gotcha id: how often the hook surfaced it, in how many sessions and
+    episodes, and in how many of those sessions a build-retry ran a program
+    named in the entry's `commands:` (the escalate-gotcha evidence)."""
+    commands = {g["id"]: g.get("commands") or [] for g in measurement.get("gotchas", [])}
+    retries: dict[str, set[str]] = defaultdict(set)
+    for r in records:
+        if r.get("detector") == "build-retry":
+            retries[str(r.get("session_id"))].add(str((r.get("evidence") or {}).get("program", "")))
+    rows: dict[str, dict] = {}
+    for r in records:
+        if r.get("kind") != "decision" or r.get("rule") != "gotchas":
+            continue
+        gid = str((r.get("evidence") or {}).get("gotcha") or "")
+        if not gid:
+            continue
+        row = rows.setdefault(gid, {"id": gid, "surfaced": 0, "sessions": set(), "episodes": set()})
+        row["surfaced"] += 1
+        row["sessions"].add(str(r.get("session_id")))
+        row["episodes"].add(sig.episode_key(r))
+    out = []
+    for gid, row in rows.items():
+        # A build-retry record keeps only the first token of the command, so
+        # `npx expo export` is recorded as `npx`. A runner therefore counts as
+        # the gotcha's program: approximate, and it only feeds a prose proposal.
+        programs = {c.split()[0] for c in commands.get(gid, []) if c.split()} | RUNNERS
+        retry_sessions = sum(1 for sid in row["sessions"] if programs & retries.get(sid, set()))
+        out.append({
+            "id": gid, "surfaced": row["surfaced"], "sessions": len(row["sessions"]),
+            "episodes": len(row["episodes"]), "retry_sessions": retry_sessions,
+            "in_gotchas_md": gid in commands,
+        })
+    out.sort(key=lambda x: (-x["surfaced"], x["id"]))
+    return out
 
 
 def _session_map(records: list[dict]) -> dict[str, dict]:
@@ -304,10 +374,17 @@ def build_report(cwd: Path, sig, rules: dict, records: list[dict]) -> dict:
         per_rule.append(entry)
         if lc and (latest_change is None or lc > latest_change):
             latest_change = lc
-    rows, total = instruction_tokens(cwd)
-    budget = int(rules["thresholds"]["instruction_token_budget"])
+    layout = _import_layout(cwd)
+    measurement = layout_report(cwd, layout) if layout else None
+    if measurement:
+        a = measurement["tiers"]["always_loaded"]
+        rows = [{"file": f["file"], "approx_tokens": f["tokens"]} for f in a["files"]]
+        total, budget = a["total"], int(a["budget"])
+    else:
+        rows, total = instruction_tokens(cwd)
+        budget = int(rules["thresholds"]["instruction_token_budget"])
     heuristics = Counter(r.get("detector") for r in records if r.get("kind") == "event")
-    return {
+    report = {
         "generated": sig.now_iso(),
         "window": {
             "sessions": summary["total_sessions"],
@@ -336,6 +413,10 @@ def build_report(cwd: Path, sig, rules: dict, records: list[dict]) -> dict:
         "outcomes_recorded": sum(1 for r in records if r.get("kind") == "outcome"),
         "archive_stats": archive_stats(cwd),
     }
+    if measurement:
+        report["layout"] = measurement
+        report["gotchas"] = _gotcha_activity(sig, records, measurement)
+    return report
 
 
 def _pct(rate: object) -> str:
@@ -358,6 +439,57 @@ def _fmt_int(n: int) -> str:
 
 def _plural(n: int, noun: str) -> str:
     return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
+def render_layout(m: dict, gotchas: list[dict]) -> list[str]:
+    """## Instruction layout and ## Gotchas, from layout.py's measurement."""
+    t = m["tiers"]
+    a = t["always_loaded"]
+    lines = ["## Instruction layout", "",
+             f"Measured by `.github/layout/layout.py` (config: {m['config']}).", "",
+             "| tier | files | tokens | budget | over |", "|---|---|---|---|---|",
+             f"| always-loaded | {len(a['files'])} | {_fmt_int(a['total'])} | {_fmt_int(a['budget'])} | "
+             f"{'yes' if a['over'] else 'no'} |"]
+    for name, label in (("router", "router"), ("doc", "doc"), ("gotchas", "gotchas file")):
+        rows = t[name]["files"]
+        biggest = max((r["tokens"] for r in rows), default=0)
+        lines.append(f"| {label} | {len(rows)} | largest {_fmt_int(biggest)} | {_fmt_int(t[name]['budget'])} each | "
+                     f"{sum(1 for r in rows if r['over'])} |")
+    lines.append("")
+    if m["over"]:
+        lines.append("Over budget:")
+        lines += [f"- {o['file']} ({o['tier']}): {_fmt_int(o['tokens'])} > {_fmt_int(o['budget'])}" for o in m["over"]]
+        lines.append("")
+    if m["dated_headings"]:
+        lines.append("Dated headings (a map turning into a changelog):")
+        lines += [f"- {d['file']}: {d['count']}" for d in m["dated_headings"]]
+        lines.append("")
+    if m["duplicate_paragraphs"]:
+        lines.append("Paragraphs repeated across always-loaded files:")
+        lines += [f"- {d['chars']} chars in {', '.join(d['files'])}: \"{d['preview']}...\"" for d in m["duplicate_paragraphs"]]
+        lines.append("")
+    if m["table_padding"]:
+        lines.append("Table padding (runs of spaces in table rows):")
+        lines += [f"- {p['file']}: {_fmt_int(p['bytes'])} bytes" for p in m["table_padding"]]
+        lines.append("")
+    if a.get("missing_imports"):
+        lines.append("Missing @ imports: " + ", ".join(f"@{x['import']} in {x['file']}" for x in a["missing_imports"]))
+        lines.append("")
+    if m["structural"]:
+        lines.append("**Structural:** " + "; ".join(m["structural_reasons"])
+                     + ". Small edits cannot close this; the fix is `/coograph-docs-restructure`.")
+        lines.append("")
+
+    lines += ["## Gotchas", "",
+              f"- Entries: {len(m['gotchas'])}; invalid: {len(m['invalid_gotchas'])}; "
+              f"stale (paths match no file): {', '.join(m['stale_gotchas']) or 'none'}"]
+    if gotchas:
+        lines += ["", "| gotcha | surfaced | sessions | episodes | sessions with a build retry on its command |",
+                  "|---|---|---|---|---|"]
+        lines += [f"| {g['id']}{'' if g['in_gotchas_md'] else ' (removed)'} | {g['surfaced']} | {g['sessions']} | "
+                  f"{g['episodes']} | {g['retry_sessions']} |" for g in gotchas]
+    lines.append("")
+    return lines
 
 
 def render_markdown(report: dict) -> str:
@@ -487,6 +619,9 @@ def render_markdown(report: dict) -> str:
     for row in report["instruction_tokens"]:
         lines.append(f"- {row['file']}: {_fmt_int(row['approx_tokens'])}")
     lines.append("")
+
+    if report.get("layout"):
+        lines += render_layout(report["layout"], report.get("gotchas") or [])
 
     a = report["archive_stats"]
     lines += ["## Archived changes", "",

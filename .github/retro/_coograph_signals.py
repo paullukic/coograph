@@ -75,7 +75,10 @@ DEFAULT_MAX_SESSIONS = 500
 
 TOOLS = {"claude-code", "codex", "opencode", "unknown"}
 KINDS = {"session", "violation", "event", "decision", "outcome"}
-DECISION_ACTIONS = {"warned", "blocked", "suppressed"}
+# "surfaced" is the gotcha hook's action: it showed a GOTCHAS.md entry. It is
+# informational, never a warning, and its rule ("gotchas") is not a registry rule.
+DECISION_ACTIONS = {"warned", "blocked", "suppressed", "surfaced"}
+GOTCHA_ID_MAX = 80
 ORIGINS = {"transcript", "hook"}
 CONFIDENCES = {"deterministic", "heuristic"}
 ENFORCEMENTS = {"prose", "hook-warn", "hook-block"}
@@ -143,7 +146,7 @@ ALLOWED_EVIDENCE: dict[str, set[str]] = {
     "user-correction": {"pattern", "after_tool"},
     "defect": {"fix", "origin", "files", "count", "days"},
     "new-dependency": {"program", "manifest", "via"},
-    "decision": {"action", "tool_use_id", "hook", "path"},
+    "decision": {"action", "tool_use_id", "hook", "path", "gotcha"},
     "outcome": {"tool_use_id", "action", "proceeded", "corrected", "reconciled", "repeated"},
     "session": {
         "message_count", "tools_used", "tool_calls_total", "edited_files",
@@ -544,17 +547,28 @@ def emit(cwd: Path, record: dict | None) -> bool:
 
 
 def emit_decision(cwd: Path, payload: dict, rule: str, action: str, hook: str,
-                  path: str = "") -> bool:
+                  path: str = "", gotcha: str = "") -> bool:
     """Record what a hook decided about one tool call. Never raises.
 
     Every rule hook calls this at the moment it warns, blocks, or would have
     warned again in the same session ("suppressed"). The record is joined to
     the transcript by tool_use_id at capture time to learn what followed. It
     is never counted as a violation; thresholds read kind == "violation" only.
+
+    `gotcha` is a GOTCHAS.md entry id, reduced to [A-Za-z0-9_-] so no free
+    text from the entry can reach the store.
     """
     if action not in DECISION_ACTIONS:
         return False
     try:
+        evidence = {
+            "action": action,
+            "tool_use_id": str(payload.get("tool_use_id") or "")[:64],
+            "hook": Path(hook).name[:60],
+            "path": rel_path(cwd, path) if path else "",
+        }
+        if gotcha:
+            evidence["gotcha"] = _SAFE_ID_RE.sub("", str(gotcha))[:GOTCHA_ID_MAX]
         record = make_record(
             tool="claude-code",
             session_id=str(payload.get("session_id") or "unknown"),
@@ -563,12 +577,7 @@ def emit_decision(cwd: Path, payload: dict, rule: str, action: str, hook: str,
             detector="decision",
             confidence="deterministic",
             origin="hook",
-            evidence={
-                "action": action,
-                "tool_use_id": str(payload.get("tool_use_id") or "")[:64],
-                "hook": Path(hook).name[:60],
-                "path": rel_path(cwd, path) if path else "",
-            },
+            evidence=evidence,
         )
         return emit(Path(cwd), record)
     except Exception:

@@ -16,7 +16,8 @@ Instruction files grow by accretion. Every rule was added after someone saw an a
 - Rules with only heuristic evidence get no change.
 - Prose rules that are still violated are escalated to hooks, never reworded louder.
 - A hook-warn rule climbs to hook-block only on ignored outcomes; a `hold:` reason in the report goes under Watching, never under Changes.
-- Over budget, every addition is paired with a removal.
+- Over budget, every addition is paired with a removal. A structural layout (`layout.structural` in the report) gets one proposal, `/coograph-docs-restructure`, instead of small edits.
+- Gotchas come and go on evidence: `add-gotcha` from repeated build retries, `prune-gotcha` for stale entries, never from user corrections alone.
 - Nothing outside `openspec/changes/<date>-retro-<n>/` is written.
 - The run ends with the summary table and a stop. `/coograph-apply` is the user's call.
 
