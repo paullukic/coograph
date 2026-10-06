@@ -475,6 +475,119 @@ class GuardTests(Base):
     def test_bad_ref_exits_2(self) -> None:
         self.assertEqual(layout.main(["--cwd", str(self.p.root), "--guard", "nope", "HEAD"]), 2)
 
+    def test_deleted_path_is_never_uncovered(self) -> None:
+        (self.p.root / "apps/web/src/other.ts").unlink()
+        self.p.git("add", "-A")
+        self.p.git("commit", "-qm", "delete")
+        head = self.p.git("rev-parse", "HEAD")
+        changed = layout.changed_files(self.p.root, self.base, head)
+        deleted = layout.changed_files(self.p.root, self.base, head, deleted=True)
+        self.assertEqual(deleted, ["apps/web/src/other.ts"])
+        self.assertEqual(layout.guard(self.p.root, self.p.config(), changed, deleted)["uncovered"], [])
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(layout.main(["--cwd", str(self.p.root), "--guard", self.base, head, "--strict"]), 0)
+
+
+@unittest.skipUnless(shutil.which("git"), "git not installed")
+class GuardRootsStrictTests(Base):
+    """guard.roots and --strict, from a project's own fixture (a monorepo whose
+    old per-workspace checks guarded only some directories)."""
+
+    CONFIG = {
+        "guard": {
+            "roots": ["apps/web/src/", "apps/site/src/pages/", "packages/core/src", "firestore.rules"],
+            "ignore": ["**/*.lock", "openspec/**", "**/*.md", "apps/site/src/content/**"],
+            "skip_marker": "[skip-agents-md]",
+        },
+    }
+    DOC = ("---\npaths:\n  - apps/web/src/routes/today/\n  - apps/site/src/content/\n"
+           "  - package.json\n---\n# Today\n")
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.p.git("init", "-q", "-b", "main")
+        self.p.write(".github/layout/layout.json", json.dumps(self.CONFIG))
+        self.p.write("docs/features/today.md", self.DOC)
+        self.p.write("apps/web/src/routes/today/a.svelte", "v1\n")
+        self.p.write("apps/web/src/lib/other.ts", "v1\n")
+        self.p.git("add", "-A", "-f")
+        self.p.git("commit", "-qm", "base")
+        self.base = self.p.git("rev-parse", "HEAD")
+        self._env = {k: os.environ.pop(k) for k in ("COOGRAPH_LAYOUT_SKIP", "COOGRAPH_PR_TITLE") if k in os.environ}
+
+    def tearDown(self) -> None:
+        os.environ.pop("COOGRAPH_PR_TITLE", None)
+        os.environ.update(self._env)
+        super().tearDown()
+
+    def _guard(self, files: list[str], strict: bool = True, title: str = "") -> tuple[int, str]:
+        for rel in files:
+            if rel.startswith("-"):  # "-path" deletes the file
+                (self.p.root / rel[1:]).unlink()
+                continue
+            path = self.p.root / rel
+            self.p.write(rel, (path.read_text(encoding="utf-8") if path.exists() else "") + "changed\n")
+        self.p.git("add", "-A", "-f")
+        self.p.git("commit", "-qm", "change")
+        head = self.p.git("rev-parse", "HEAD")
+        if title:
+            os.environ["COOGRAPH_PR_TITLE"] = title
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = layout.main(["--cwd", str(self.p.root), "--guard", self.base, head]
+                               + (["--strict"] if strict else []))
+        return code, out.getvalue()
+
+    def test_covered_with_doc(self) -> None:
+        self.assertEqual(self._guard(["apps/web/src/routes/today/a.svelte", "docs/features/today.md"])[0], 0)
+
+    def test_covered_without_doc(self) -> None:
+        self.assertEqual(self._guard(["apps/web/src/routes/today/a.svelte"])[0], 1)
+
+    def test_uncovered_in_root_strict(self) -> None:
+        code, out = self._guard(["apps/web/src/lib/other.ts"])
+        self.assertEqual(code, 1)
+        self.assertIn("UNCOVERED  apps/web/src/lib/other.ts", out)
+
+    def test_uncovered_in_root_not_strict(self) -> None:
+        code, out = self._guard(["apps/web/src/lib/other.ts"], strict=False)
+        self.assertEqual(code, 0)
+        self.assertIn("uncovered  apps/web/src/lib/other.ts", out)
+
+    def test_outside_roots_though_a_doc_covers_it(self) -> None:
+        self.assertEqual(self._guard(["package.json"])[0], 0)
+
+    def test_ignored_content_under_a_doc(self) -> None:
+        self.assertEqual(self._guard(["apps/site/src/content/blog/post.mdx"])[0], 0)
+
+    def test_workflow_only(self) -> None:
+        self.assertEqual(self._guard([".github/workflows/x.yml"])[0], 0)
+
+    def test_root_without_trailing_slash_and_file_root(self) -> None:
+        self.assertEqual(self._guard(["packages/core/src/x.ts"])[0], 1)
+        self.assertTrue(layout.under_roots("firestore.rules", self.CONFIG["guard"]["roots"]))
+        self.assertFalse(layout.under_roots("packages/core/srcx/y.ts", self.CONFIG["guard"]["roots"]))
+
+    def test_skip_marker_in_title(self) -> None:
+        self.assertEqual(self._guard(["apps/web/src/routes/today/a.svelte"], title="chore [skip-agents-md]")[0], 0)
+
+    def test_deleted_uncovered_file_strict(self) -> None:
+        self.assertEqual(self._guard(["-apps/web/src/lib/other.ts"])[0], 0)
+
+    def test_invalid_roots_exit_2(self) -> None:
+        for bad in ("apps/", [""], ["/"], [3]):
+            with self.subTest(roots=bad):
+                cfg = json.loads(json.dumps(self.CONFIG))
+                cfg["guard"]["roots"] = bad
+                self.p.write(".github/layout/layout.json", json.dumps(cfg))
+                with redirect_stderr(io.StringIO()) as err:
+                    self.assertEqual(layout.main(["--cwd", str(self.p.root), "--budget"]), 2)
+                self.assertIn("guard.roots", err.getvalue())
+
+    def test_strict_needs_guard(self) -> None:
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            layout.main(["--cwd", str(self.p.root), "--budget", "--strict"])
+
 
 class TemplateTests(unittest.TestCase):
     """The template every project starts from: within budget, each rule stated once."""
