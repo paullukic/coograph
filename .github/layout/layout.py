@@ -244,6 +244,8 @@ def _paths_exist(cwd: Path, patterns: list[str], files: list[str]) -> bool:
     globs = []
     for p in patterns:
         p = p.strip().strip("`").strip()
+        if p.endswith("/"):
+            p += "**"  # `dist/` names a directory: anything under it
         if p:
             globs.append(p if "/" in p else "**/" + p)  # bare names match at any depth
     return bool(find_files(cwd, globs, skip=STALE_SKIP))

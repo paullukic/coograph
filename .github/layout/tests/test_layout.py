@@ -309,6 +309,10 @@ class GotchaTests(Base):
                        .replace("## expo-env", "## gone").replace("`apps/mobile/**`, `app.config.ts`", "`legacy/**`"))
         self.assertNotIn(".env.production", layout.list_files(self.p.root))
         self.assertEqual(self.p.measure()["stale_gotchas"], ["gone"])
+        # the trailing-slash directory form, and a bare name at depth
+        self.assertTrue(layout._paths_exist(self.p.root, ["dist/"], []))
+        self.assertTrue(layout._paths_exist(self.p.root, ["out.js"], []))
+        self.assertFalse(layout._paths_exist(self.p.root, ["legacy/"], []))
 
     def test_live_gotcha_not_stale(self) -> None:
         self.p.write("GOTCHAS.md", GOTCHA)

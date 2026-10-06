@@ -28,7 +28,7 @@ checked against the code; every fact you drop is listed with a reason.
 Look for a non-archived `openspec/changes/*-docs-restructure/`.
 
 - **Found, not yet approved:** show it and ask whether to continue with it or discard it. Never start a second one alongside it.
-- **Found and approved:** this is a resume. Go to Phase 2 and continue at the first unticked task in its `tasks.md`. Do not re-run Phase 1. Do not rewrite `notes/` or `.coograph/layout-before.json`: they hold the only record of the original facts and the before numbers.
+- **Found and approved:** this is a resume. Go to Phase 2 and continue at the first unticked task in its `tasks.md`. Do not re-run Phase 1. Do not rewrite anything under its `notes/` (including `notes/layout-before.json`): it holds the only record of the original facts and the before numbers.
 - **An area name was given** (`/coograph-docs-restructure auth`): it applies only to an approved restructure. Run just that area's task. If no approved restructure exists, say so and stop.
 - **Not found:** Phase 1.
 
@@ -38,10 +38,13 @@ Look for a non-archived `openspec/changes/*-docs-restructure/`.
 
 ### Step 1: Take stock
 
+Create the change directory now, so the snapshot lives with the change and is
+archived with it (a later restructure then takes a fresh one):
+
 ```bash
 python3 .github/layout/layout.py --budget
-mkdir -p .coograph
-[ -f .coograph/layout-before.json ] || python3 .github/layout/layout.py --json > .coograph/layout-before.json
+mkdir -p openspec/changes/<YYYY-MM-DD>-docs-restructure/notes
+python3 .github/layout/layout.py --json > openspec/changes/<YYYY-MM-DD>-docs-restructure/notes/layout-before.json
 ```
 
 If `.github/layout/layout.py` is missing, the project predates the layout
@@ -180,7 +183,7 @@ text). No dated headings, no "added in", no "(openspec ...)": history lives in
 
 ```bash
 python3 .github/layout/layout.py --budget
-python3 .github/layout/layout.py --json > .coograph/layout-after.json
+python3 .github/layout/layout.py --json > openspec/changes/<YYYY-MM-DD>-docs-restructure/notes/layout-after.json
 ```
 
 `--budget` must exit 0. Report before and after per tier from the two JSON
