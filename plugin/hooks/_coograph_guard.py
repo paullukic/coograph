@@ -14,6 +14,7 @@ here means "run the hook".
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import sys
@@ -71,6 +72,24 @@ def _claim(key: str, hook: str, session: str) -> bool:
     if first_in_session:
         _prune(session_dir)
     return True
+
+
+def warn_model(payload: dict, text: str) -> None:
+    """Say a hook's warning so the model reads it, not only the user's log.
+
+    A PreToolUse hook's stderr with exit 1 never reaches the model (probe of
+    2026-10-06): it lands in the transcript as a hook attachment the model does
+    not see. `additionalContext` does reach it; `systemMessage` shows the same
+    text in the terminal. The caller exits 0. Never raises.
+    """
+    try:
+        event = str(payload.get("hook_event_name") or "PreToolUse")
+        sys.stdout.write(json.dumps({
+            "systemMessage": text,
+            "hookSpecificOutput": {"hookEventName": event, "additionalContext": text},
+        }) + "\n")
+    except Exception:
+        pass
 
 
 def should_skip(payload: dict, hook_file: str) -> bool:

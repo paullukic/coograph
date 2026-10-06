@@ -3,10 +3,11 @@
 
 Finds the most-recently-modified OpenSpec in openspec/changes/<slug>/ (not
 archive). Parses its tasks.md for file paths referenced in backticks, then
-prints a warning to stderr if the current edit target isn't among them.
+warns if the current edit target isn't among them.
 
-Never blocks - exits 1 so the warning surfaces to the user without stopping
-the tool call. Silent when no active OpenSpec exists.
+Never blocks: the warning goes to the model as additionalContext (and to the
+user as systemMessage) with exit 0, without stopping the tool call. Silent
+when no active OpenSpec exists.
 """
 
 from __future__ import annotations
@@ -18,10 +19,20 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True  # keep __pycache__/ out of .claude/hooks/
 try:
-    from _coograph_guard import should_skip
+    from _coograph_guard import should_skip, warn_model
 except ImportError:  # guard not copied next to this hook: run unguarded
     def should_skip(payload: dict, hook_file: str) -> bool:
         return False
+
+    def warn_model(payload: dict, text: str) -> None:
+        # Same JSON as _coograph_guard.warn_model: stderr with exit 1 never
+        # reaches the model, additionalContext does.
+        try:
+            print(json.dumps({"systemMessage": text, "hookSpecificOutput": {
+                "hookEventName": str(payload.get("hook_event_name") or "PreToolUse"),
+                "additionalContext": text}}))
+        except Exception:
+            pass
 try:
     import _coograph_signals as signals
 except ImportError:  # Retro store not copied next to this hook: warn only
@@ -133,14 +144,13 @@ def main() -> int:
         if Path(scoped).name == target_name:
             return 0
 
-    print(
+    warn_model(payload, (
         f"[warn-scope] editing {rel} but active OpenSpec "
         f"'{slug}' does not reference this path in tasks.md. "
-        f"Confirm intent or update tasks.md.",
-        file=sys.stderr,
-    )
+        f"Confirm intent or update tasks.md."
+    ))
     _emit_signal(payload, cwd, rel, slug)
-    return 1
+    return 0
 
 
 def _emit_signal(payload: dict, cwd: Path, rel: str, slug: str) -> None:

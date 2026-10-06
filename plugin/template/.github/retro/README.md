@@ -209,7 +209,22 @@ hooks have run under that version, every `hook-warn` rule over threshold reads
 
 ## Writing a hook for a rule
 
-Three things bite in order, and the first two are silent.
+**0. Warn through `additionalContext`, never stderr with exit 1.** A `PreToolUse` hook's
+stderr with exit 1 does not reach the model: Claude Code stores it as a transcript
+attachment the model never reads. A probe on 2026-10-06 proved it: the model, asked to
+quote every message it received after a warned edit, answered `NONE`. Call
+`warn_model(payload, text)` from `_coograph_guard.py` and exit 0; it prints
+`hookSpecificOutput.additionalContext` for the model and `systemMessage` for the user.
+Copy the fallback from `warn-scope.py` so the hook still speaks without the guard module.
+A blocking hook is the exception: exit 2 hands stderr to the model as the reason.
+
+Retro counts a rule's outcomes only from its `outcomes_since` date on (an optional rule
+field, `YYYY-MM-DD`), so evidence from an older version of a hook (for these four, warnings
+nobody saw) never feeds the warn-to-block gate. Set `outcomes_since` whenever a hook's
+behaviour changes: a new hook, warn to block, a new output channel. `last_changed` marks
+any edit to the rule, a rewording included, and does not discard outcomes.
+
+Three more things bite in order, and the first two are silent.
 
 **1. Record a decision always; a violation only if nothing else observes the rule.** Every rule
 hook calls `signals.emit_decision(cwd, payload, rule, action, __file__, path)` where it warns
