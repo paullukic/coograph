@@ -447,6 +447,36 @@ class ReportTests(unittest.TestCase):
         }])
         self.assertIn("| expo-env | 5 | 1 | 1 | 1 |", md)
 
+    def test_gotcha_without_commands_never_matches_retries(self) -> None:
+        """An entry about files must not pick up an unrelated `python -m pytest` retry."""
+        _session(self.root, "g2", "2026-09-01")
+        (self.root / "GOTCHAS.md").write_text(
+            "## generated-client\n- **Symptom:** s\n- **Cause:** c\n- **Fix / rule:** f\n"
+            "- **paths:** `src/api/**`\n- **confirmed:** 2026-10-01\n", encoding="utf-8")
+        sig.emit_decision(self.root, {"session_id": "g2", "tool_use_id": "t"}, "gotchas",
+                          "surfaced", "gotcha-surface.py", "", gotcha="generated-client")
+        sig.emit(self.root, sig.make_record(
+            tool="claude-code", session_id="g2", kind="event", rule="none", detector="build-retry",
+            confidence="deterministic", origin="transcript",
+            evidence={"program": "python", "hash": "abc", "runs": 3, "errors": 2}))
+        report, _ = self._report()
+        self.assertEqual(report["gotchas"][0]["retry_sessions"], 0)
+
+    def test_status_reports_structural_layout_without_signals(self) -> None:
+        (self.root / "apps" / "web").mkdir(parents=True)
+        (self.root / "apps" / "web" / "AGENTS.md").write_text("x" * 20000, encoding="utf-8")
+        proc = _run_retro(self.root, "--status")
+        self.assertEqual(proc.returncode, 3)
+        self.assertIn("layout: STRUCTURAL: apps/web/AGENTS.md over twice its budget", proc.stdout)
+        self.assertIn("/coograph-docs-restructure", proc.stdout)
+        self.assertIn("retro: no signals captured", proc.stdout)
+        line = sig.status_line(self.root)
+        self.assertIn("[layout] STRUCTURAL", line)
+
+    def test_status_quiet_when_layout_is_fine(self) -> None:
+        proc = _run_retro(self.root, "--status")
+        self.assertNotIn("layout:", proc.stdout)
+
     def test_end_to_end_from_transcript(self) -> None:
         t = Transcript("e2e")
         t.result(t.tool("Grep", pattern="a"))

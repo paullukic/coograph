@@ -15,6 +15,10 @@ Registered projects get, on the next `git pull` of coograph:
 - `.github/layout/` and a `layout.json` seeded from `layout.seed.json`. It is yours from then on and is never overwritten. For a monorepo, set `routers` to one `<workspace>/AGENTS.md` glob per workspace; for a single package set it to `[]`.
 - The gotcha hook, wired in `.claude/settings.json`. It does nothing until `GOTCHAS.md` has entries. Copy the template's `GOTCHAS.md` for the format, or let `/coograph-debug` and `/coograph-retro` propose entries.
 
+Every Claude Code session start now adds a `[layout]` line when the instruction files are over budget, and `retro.py --status` prints a `layout:` line, with or without captured signals. A STRUCTURAL project is told to run `/coograph-docs-restructure` there, not only in a retro report.
+
+On Windows with `core.autocrlf=true`, add `**/coograph-ultra-review/workflow.js text eol=lf` to your `.gitattributes` and re-checkout that file, or `/coograph-ultra-review` is refused for "control characters".
+
 Check where you stand:
 
 ```bash

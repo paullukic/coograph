@@ -220,7 +220,9 @@ def _gotcha_activity(sig, records: list[dict], measurement: dict) -> list[dict]:
         # A build-retry record keeps only the first token of the command, so
         # `npx expo export` is recorded as `npx`. A runner therefore counts as
         # the gotcha's program: approximate, and it only feeds a prose proposal.
-        programs = {c.split()[0] for c in commands.get(gid, []) if c.split()} | RUNNERS
+        programs = {c.split()[0] for c in commands.get(gid, []) if c.split()}
+        if programs:  # an entry without commands: is about files, never about a retried command
+            programs |= RUNNERS
         retry_sessions = sum(1 for sid in row["sessions"] if programs & retries.get(sid, set()))
         out.append({
             "id": gid, "surfaced": row["surfaced"], "sessions": len(row["sessions"]),
@@ -736,6 +738,11 @@ def mark_retro(cwd: Path, sig, session_id: str) -> int:
 
 
 def cmd_status(cwd: Path, sig) -> int:
+    # The layout verdict is printed first and never changes the exit code:
+    # it does not depend on captured signals, so it must not wait for them.
+    notice = sig.layout_notice(cwd) if hasattr(sig, "layout_notice") else None
+    if notice:
+        print(notice.replace("[layout] ", "layout: ", 1))
     rules = sig.load_rules(cwd)
     if rules is None:
         archives = sig.archived_changes(cwd)

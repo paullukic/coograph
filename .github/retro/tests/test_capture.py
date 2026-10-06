@@ -1177,15 +1177,27 @@ class GotchaHookTests(unittest.TestCase):
         self.assertEqual(read_signals(root), [])
 
     def test_gotcha_text_never_reaches_the_store(self) -> None:
-        (self.root / "GOTCHAS.md").write_text(
-            self.ENTRY.replace("expo-env", f"expo {SENTINEL}!").replace("old API URL", SENTINEL),
-            encoding="utf-8",
-        )
+        """The entry body and the command text are the privacy boundary. The id
+        is the heading slug and is stored on purpose, so the sentinel goes in
+        every other part of the entry and in the command."""
+        body = (self.ENTRY.replace("old API URL", SENTINEL).replace(".env` wins", f".env` {SENTINEL} wins")
+                .replace("change `.env.production`", f"change `{SENTINEL}`")
+                .replace("`expo export`\n", f"`expo export`, `{SENTINEL}`\n"))
+        (self.root / "GOTCHAS.md").write_text(body, encoding="utf-8")
         self._run("q9", "Edit", "h", file_path=str(self.root / "apps" / "mobile" / "app.json"))
+        self._run("q9b", "Bash", "i", command=f"npx expo export {SENTINEL}")
         raw = (self.root / ".coograph" / "signals.jsonl").read_text(encoding="utf-8")
-        self.assertNotIn("old API URL", raw)
+        self.assertEqual(len(read_signals(self.root)), 2, raw)
+        self.assertNotIn(SENTINEL, raw)
+        self.assertNotIn(SENTINEL.lower(), raw)
+
+    def test_gotcha_id_is_sanitised_at_emit(self) -> None:
+        """emit_decision reduces any id to [A-Za-z0-9_-]{1,80}, whatever the caller passes."""
+        sig.emit_decision(self.root, {"session_id": "q12", "tool_use_id": "z"}, "gotchas", "surfaced",
+                          "gotcha-surface.py", "", gotcha=f"bad id! {SENTINEL} <x> " + "y" * 200)
         rec = read_signals(self.root)[0]
         self.assertRegex(rec["evidence"]["gotcha"], r"^[A-Za-z0-9_-]{1,80}$")
+        self.assertNotIn(" ", rec["evidence"]["gotcha"])
 
     def test_outcome_has_no_reconciliation(self) -> None:
         t = Transcript("q10")

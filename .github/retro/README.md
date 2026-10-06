@@ -132,7 +132,7 @@ python3 .claude/hooks/capture-signals.py --backfill ~/.claude/projects/<slug> --
 
 # analyze
 python3 .github/retro/retro.py --report      # writes .coograph/retro/report.{json,md}
-python3 .github/retro/retro.py --status      # exit 0 = enough sessions to run a retro
+python3 .github/retro/retro.py --status      # exit 0 = enough sessions to run a retro; a `layout:` line first when the instruction files are over budget
 python3 .github/retro/retro.py --validate    # check rules.json
 python3 .github/retro/retro.py --merge-seed  # create rules.json from rules.seed.json, or add newly seeded rules
 python3 .github/retro/retro.py --mark-retro <session_id>   # record that a retro ran (the skill does this)

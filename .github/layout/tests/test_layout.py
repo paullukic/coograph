@@ -294,6 +294,22 @@ class GotchaTests(Base):
         self.p.write("src/a.ts", "x")
         self.assertEqual(self.p.measure()["stale_gotchas"], ["expo-env"])
 
+    @unittest.skipUnless(shutil.which("git"), "git not installed")
+    def test_gitignored_target_is_not_stale(self) -> None:
+        """git ls-files omits ignored files; the gotcha still applies to them."""
+        self.p.git("init", "-q")
+        self.p.write(".gitignore", ".env*\ndist/\n")
+        self.p.write(".env.production", "API_URL=x\n")
+        self.p.write("dist/out.js", "x")
+        self.p.write("GOTCHAS.md",
+                     GOTCHA.replace("`apps/mobile/**`, `app.config.ts`", "`.env.production`")
+                     + "\n" + GOTCHA.split("```\n\n", 1)[1]
+                       .replace("## expo-env", "## dist-out").replace("`apps/mobile/**`, `app.config.ts`", "`dist/**`")
+                     + "\n" + GOTCHA.split("```\n\n", 1)[1]
+                       .replace("## expo-env", "## gone").replace("`apps/mobile/**`, `app.config.ts`", "`legacy/**`"))
+        self.assertNotIn(".env.production", layout.list_files(self.p.root))
+        self.assertEqual(self.p.measure()["stale_gotchas"], ["gone"])
+
     def test_live_gotcha_not_stale(self) -> None:
         self.p.write("GOTCHAS.md", GOTCHA)
         self.p.write("apps/mobile/app.json", "{}")
