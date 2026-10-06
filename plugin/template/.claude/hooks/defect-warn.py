@@ -27,7 +27,7 @@ Markers under .coograph/markers/, keyed by session id:
   defect-reviewed-<sid>  a review ran this session
   defect-warned-<sid>    the warning has already been shown
 
-Never blocks - exits 1 so the warning surfaces without stopping the commit, and
+Never blocks: warns the model through additionalContext with exit 0, and
 at most once per session. If `.coograph/` is unwritable the markers cannot be
 written: the "edited" marker failing silences the hook, the "warned" marker
 failing degrades it to once per commit.
@@ -43,10 +43,20 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True  # keep __pycache__/ out of .claude/hooks/
 try:
-    from _coograph_guard import should_skip
+    from _coograph_guard import should_skip, warn_model
 except ImportError:  # guard not copied next to this hook: run unguarded
     def should_skip(payload: dict, hook_file: str) -> bool:
         return False
+
+    def warn_model(payload: dict, text: str) -> None:
+        # Same JSON as _coograph_guard.warn_model: stderr with exit 1 never
+        # reaches the model, additionalContext does.
+        try:
+            print(json.dumps({"systemMessage": text, "hookSpecificOutput": {
+                "hookEventName": str(payload.get("hook_event_name") or "PreToolUse"),
+                "additionalContext": text}}))
+        except Exception:
+            pass
 try:
     import _coograph_signals as signals  # shim in this directory -> .github/retro/
 except ImportError:  # without the store the hook still warns, it just records nothing
@@ -156,14 +166,13 @@ def main() -> int:
         _decide(cwd, payload, "suppressed")
         return 0
 
-    print(
+    warn_model(payload, (
         "[defect-warn] committing source edits that no review saw this session. "
-        "Run /coograph-review or /coograph-verify before declaring this done.",
-        file=sys.stderr,
-    )
+        "Run /coograph-review or /coograph-verify before declaring this done."
+    ))
     _touch(_marker(cwd, "warned", sid))
     _decide(cwd, payload, "warned")
-    return 1
+    return 0
 
 
 def _decide(cwd: Path, payload: dict, action: str) -> None:

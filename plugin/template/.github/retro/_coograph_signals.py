@@ -295,6 +295,9 @@ def validate_rules(data: object) -> str | None:
         det = rule.get("detector")
         if det is not None and (not isinstance(det, str) or det not in ALLOWED_EVIDENCE):
             return f"rules[{i}].detector"
+        since = rule.get("outcomes_since")
+        if since is not None and not (isinstance(since, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", since)):
+            return f"rules[{i}].outcomes_since"
         source = rule.get("source")
         if not isinstance(source, dict) or not isinstance(source.get("file"), str):
             return f"rules[{i}].source"
@@ -798,6 +801,14 @@ def summarize(records: list[dict], rules: dict) -> dict:
         det_episodes = len({episode_key(r) for r in det_hits})
         decisions = [r for r in records if r.get("kind") == "decision" and r.get("rule") == rid]
         outcomes = [r for r in records if r.get("kind") == "outcome" and r.get("rule") == rid]
+        # Outcomes are evidence about the hook in place when they were recorded.
+        # outcomes_since marks the last change to the hook's behaviour (not to
+        # the rule's wording: that is last_changed, which a prose edit sets and
+        # which must not wipe the evidence). Older outcomes describe a different
+        # hook, e.g. warnings the model never saw before 2026-10-06.
+        since = rule.get("outcomes_since")
+        if since:
+            outcomes = [r for r in outcomes if str(r.get("ts", ""))[:10] >= str(since)]
         decision_counts = {
             action: sum(1 for d in decisions if (d.get("evidence") or {}).get("action") == action)
             for action in ("warned", "blocked", "suppressed")

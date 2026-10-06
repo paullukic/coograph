@@ -17,7 +17,7 @@ Records a decision (warned / suppressed) through `_coograph_signals` and never
 a violation: `openspec-gate` has a transcript detector, and a hook-emitted
 violation would be counted twice.
 
-Never blocks: exits 1 so the warning surfaces without stopping the edit, at
+Never blocks: warns the model through additionalContext with exit 0, at
 most once per session. Markers under .coograph/markers/, keyed by session id:
   openspec-edited-<sid>   distinct source paths edited so far, one per line
   openspec-touched-<sid>  an OpenSpec change directory was edited or created
@@ -35,10 +35,20 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True  # keep __pycache__/ out of .claude/hooks/
 try:
-    from _coograph_guard import should_skip
+    from _coograph_guard import should_skip, warn_model
 except ImportError:  # guard not copied next to this hook: run unguarded
     def should_skip(payload: dict, hook_file: str) -> bool:
         return False
+
+    def warn_model(payload: dict, text: str) -> None:
+        # Same JSON as _coograph_guard.warn_model: stderr with exit 1 never
+        # reaches the model, additionalContext does.
+        try:
+            print(json.dumps({"systemMessage": text, "hookSpecificOutput": {
+                "hookEventName": str(payload.get("hook_event_name") or "PreToolUse"),
+                "additionalContext": text}}))
+        except Exception:
+            pass
 try:
     import _coograph_signals as signals  # shim in this directory -> .github/retro/
 except ImportError:  # without the shared module there is no detector to agree with
@@ -148,15 +158,14 @@ def main() -> int:
         _decide(cwd, payload, "suppressed", rel)
         return 0
 
-    print(
+    warn_model(payload, (
         f"[openspec-gate] second source file this session ({rel}) with no OpenSpec touched "
         "and no active change under openspec/changes/. CLAUDE.md OPENSPEC OR STOP: "
-        "propose first, or name the literal exemption.",
-        file=sys.stderr,
-    )
+        "propose first, or name the literal exemption."
+    ))
     _touch(_marker(cwd, "warned", sid))
     _decide(cwd, payload, "warned", rel)
-    return 1
+    return 0
 
 
 if __name__ == "__main__":

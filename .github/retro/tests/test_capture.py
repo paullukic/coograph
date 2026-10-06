@@ -649,6 +649,19 @@ def _isolated_env(root: Path, base: Path) -> dict[str, str]:
     }
 
 
+def _warned(test: unittest.TestCase, proc: subprocess.CompletedProcess, tag: str) -> str:
+    """A warn hook's warning reaches the model: exit 0, nothing on stderr, one
+    JSON object whose additionalContext (and systemMessage) carries the text.
+    Exit 1 with stderr never reached the model (probe of 2026-10-06)."""
+    test.assertEqual((proc.returncode, proc.stderr), (0, ""))
+    out = json.loads(proc.stdout)
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    test.assertEqual(out["hookSpecificOutput"]["hookEventName"], "PreToolUse")
+    test.assertEqual(out["systemMessage"], ctx)
+    test.assertTrue(ctx.startswith(tag), ctx)
+    return ctx
+
+
 class HookDecisionRulesTests(unittest.TestCase):
     """Every rule hook records what it decided, so capture can learn what followed."""
 
@@ -827,8 +840,7 @@ class HookModeTests(unittest.TestCase):
                               "tool_input": {"file_path": str(root / "src" / "b.ts")}}),
             capture_output=True, text=True, env=env, cwd=str(root),
         )
-        self.assertEqual(proc.returncode, 1)
-        self.assertIn("[warn-scope]", proc.stderr)
+        _warned(self, proc, "[warn-scope]")
         recs = read_signals(root)
         violations = [r for r in recs if r["kind"] == "violation"]
         decisions = [r for r in recs if r["kind"] == "decision"]
@@ -885,8 +897,7 @@ class HookModeTests(unittest.TestCase):
             "tool_use_id": "t3", "cwd": str(self.root),
             "tool_input": {"command": "npm install left-pad"},
         })
-        self.assertEqual(proc.returncode, 1)
-        self.assertIn("[no-new-deps]", proc.stderr)
+        _warned(self, proc, "[no-new-deps]")
         recs = read_signals(self.root)
         self.assertEqual([r["kind"] for r in recs], ["decision"])
         self.assertEqual(recs[0]["rule"], "no-new-deps")
@@ -899,8 +910,7 @@ class HookModeTests(unittest.TestCase):
             "tool_use_id": "t4", "cwd": str(self.root),
             "tool_input": {"command": "yarn add axios"},
         })
-        self.assertEqual(again.returncode, 0)
-        self.assertEqual(again.stderr.strip(), "")
+        self.assertEqual((again.returncode, again.stdout, again.stderr), (0, "", ""))
         recs = read_signals(self.root)
         self.assertEqual([r["kind"] for r in recs], ["decision", "decision"])
         self.assertEqual(recs[1]["evidence"]["action"], "suppressed")
@@ -911,7 +921,7 @@ class HookModeTests(unittest.TestCase):
             "tool_use_id": "t5", "cwd": str(self.root),
             "tool_input": {"file_path": str(self.root / "package.json")},
         })
-        self.assertEqual(manifest.returncode, 1)
+        _warned(self, manifest, "[no-new-deps]")
         self.assertEqual(read_signals(self.root)[-1]["evidence"]["path"], "package.json")
 
     def test_no_new_deps_agrees_with_its_detector(self) -> None:
@@ -923,13 +933,14 @@ class HookModeTests(unittest.TestCase):
             'git commit -m "npm install left-pad"', "echo 'npm install foo'", "npm run build",
         ]
         for i, command in enumerate(commands):
-            expected = 1 if sig.dep_command(command) else 0
+            expected = bool(sig.dep_command(command))
             proc = self._run("no-new-deps-warn.py", {
                 "hook_event_name": "PreToolUse", "tool_name": "Bash",
                 "session_id": f"agree{i}", "tool_use_id": f"a{i}", "cwd": str(self.root),
                 "tool_input": {"command": command},
             })
-            self.assertEqual(proc.returncode, expected, f"hook disagreed on: {command}")
+            self.assertEqual(proc.returncode, 0, command)
+            self.assertEqual("[no-new-deps]" in proc.stdout, expected, f"hook disagreed on: {command}")
 
     def test_defect_warn_fires_on_unreviewed_commit(self) -> None:
         payload = {"hook_event_name": "PreToolUse", "session_id": "df1", "cwd": str(self.root)}
@@ -937,8 +948,7 @@ class HookModeTests(unittest.TestCase):
                                      "tool_input": {"file_path": str(self.root / "src" / "a.ts")}})
         proc = self._run("defect-warn.py", {**payload, "tool_name": "Bash", "tool_use_id": "t5b",
                                             "tool_input": {"command": "git commit -m x"}})
-        self.assertEqual(proc.returncode, 1)
-        self.assertIn("[defect-warn]", proc.stderr)
+        _warned(self, proc, "[defect-warn]")
         recs = read_signals(self.root)
         self.assertEqual([r["kind"] for r in recs], ["decision"])
         self.assertEqual(recs[0]["rule"], "defect")
@@ -1010,12 +1020,11 @@ class OpenspecGateHookTests(unittest.TestCase):
         self.assertEqual(self._marker(root, "edited", "g1").read_text().split(), ["src/a.ts"])
 
         second = self._gate(root, "g1", "Edit", "g1b", file_path=str(root / "src" / "b.ts"))
-        self.assertEqual(second.returncode, 1)
-        self.assertIn("[openspec-gate] second source file this session (src/b.ts)", second.stderr)
+        _warned(self, second, "[openspec-gate] second source file this session (src/b.ts)")
         self.assertTrue(self._marker(root, "warned", "g1").exists())
 
         third = self._gate(root, "g1", "Edit", "g1c", file_path=str(root / "src" / "c.ts"))
-        self.assertEqual((third.returncode, third.stderr), (0, ""))
+        self.assertEqual((third.returncode, third.stdout, third.stderr), (0, "", ""))
 
         recs = read_signals(root)
         self.assertEqual([r["kind"] for r in recs], ["decision", "decision"])
@@ -1656,6 +1665,78 @@ class EpisodeTests(unittest.TestCase):
         self.assertEqual(sig.sessions_since(sessions, last_retro), 0)
         # episodes_since keeps counting the days that followed.
         self.assertEqual(sig.episodes_since(episodes, sessions, last_retro), 3)
+
+
+
+class WarnHookWithoutGuardTests(unittest.TestCase):
+    """The local fallback in each warn hook speaks the same JSON."""
+
+    def _run(self, root: Path, base: Path, hook: str, payload: dict) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(root / ".claude" / "hooks" / hook)],
+            input=json.dumps({"hook_event_name": "PreToolUse", "cwd": str(root), **payload}),
+            capture_output=True, text=True, env=_isolated_env(root, base), cwd=str(root),
+        )
+
+    def test_every_warn_hook_warns_without_guard_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = make_project(base / "noguard", active_openspec=True)
+            (root / ".claude" / "hooks" / "_coograph_guard.py").unlink()
+            src = lambda name: str(root / "src" / name)
+
+            proc = self._run(root, base, "no-new-deps-warn.py", {
+                "tool_name": "Bash", "session_id": "ng1", "tool_use_id": "n1",
+                "tool_input": {"command": "npm install left-pad"}})
+            _warned(self, proc, "[no-new-deps]")
+
+            proc = self._run(root, base, "warn-scope.py", {
+                "tool_name": "Edit", "session_id": "ng2", "tool_use_id": "n2",
+                "tool_input": {"file_path": src("b.ts")}})
+            _warned(self, proc, "[warn-scope]")
+
+            self._run(root, base, "defect-warn.py", {
+                "tool_name": "Edit", "session_id": "ng3", "tool_use_id": "n3a",
+                "tool_input": {"file_path": src("a.ts")}})
+            proc = self._run(root, base, "defect-warn.py", {
+                "tool_name": "Bash", "session_id": "ng3", "tool_use_id": "n3b",
+                "tool_input": {"command": "git commit -m x"}})
+            _warned(self, proc, "[defect-warn]")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = make_project(base / "noguard-gate")
+            (root / ".claude" / "hooks" / "_coograph_guard.py").unlink()
+            self._run(root, base, "openspec-gate-warn.py", {
+                "tool_name": "Edit", "session_id": "ng4", "tool_use_id": "n4a",
+                "tool_input": {"file_path": str(root / "src" / "a.ts")}})
+            proc = self._run(root, base, "openspec-gate-warn.py", {
+                "tool_name": "Edit", "session_id": "ng4", "tool_use_id": "n4b",
+                "tool_input": {"file_path": str(root / "src" / "b.ts")}})
+            _warned(self, proc, "[openspec-gate]")
+
+    def test_in_scope_edit_prints_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = make_project(base / "inscope", active_openspec=True)
+            proc = self._run(root, base, "warn-scope.py", {
+                "tool_name": "Edit", "session_id": "is1", "tool_use_id": "i1",
+                "tool_input": {"file_path": str(root / "src" / "a.ts")}})
+            self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, "", ""))
+
+
+class WarnHooksNeverUseStderrTests(unittest.TestCase):
+    """No warn hook goes back to the channel the model cannot read."""
+
+    HOOKS = Path(__file__).resolve().parents[3] / ".claude" / "hooks"
+
+    def test_sources(self) -> None:
+        for name in ("warn-scope.py", "openspec-gate-warn.py", "no-new-deps-warn.py", "defect-warn.py"):
+            with self.subTest(hook=name):
+                src = (self.HOOKS / name).read_text(encoding="utf-8")
+                self.assertNotIn("file=sys.stderr", src)
+                self.assertNotIn("return 1", src)
+                self.assertIn("warn_model(payload", src)
 
 
 if __name__ == "__main__":

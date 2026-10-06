@@ -61,7 +61,8 @@ def _session(root: Path, sid: str, started: str, *, edits: int = 0, review: bool
     sig.replace_session(root, sid, recs)
 
 
-def _outcomes(root: Path, sid: str, rule: str, *, repeated: list[int], reconciled: object = None) -> None:
+def _outcomes(root: Path, sid: str, rule: str, *, repeated: list[int], reconciled: object = None,
+              ts: str | None = None) -> None:
     """One warned decision plus its outcome per entry in `repeated`. Call after _session:
     replace_session drops transcript-origin records, and outcomes are transcript-origin."""
     for i, count in enumerate(repeated):
@@ -73,7 +74,7 @@ def _outcomes(root: Path, sid: str, rule: str, *, repeated: list[int], reconcile
         ))
         sig.emit(root, sig.make_record(
             tool="claude-code", session_id=sid, kind="outcome", rule=rule, detector="outcome",
-            confidence="deterministic", origin="transcript",
+            confidence="deterministic", origin="transcript", ts=ts,
             evidence={"tool_use_id": tid, "action": "warned", "proceeded": True,
                       "corrected": False, "reconciled": reconciled, "repeated": count},
         ))
@@ -97,6 +98,16 @@ class RegistryTests(unittest.TestCase):
         proc = _run_retro(self.root, "--validate")
         self.assertEqual(proc.returncode, 2)
         self.assertIn("rules[0].enforcement", proc.stderr)
+
+    def test_validate_outcomes_since(self) -> None:
+        seed = json.loads(SEED.read_text(encoding="utf-8"))
+        self.assertIsNone(sig.validate_rules(seed))
+        self.assertEqual(
+            {r["id"] for r in seed["rules"] if r.get("outcomes_since")},
+            {"scope", "openspec-gate", "no-new-deps", "defect"},
+        )
+        seed["rules"][0]["outcomes_since"] = "last week"
+        self.assertEqual(sig.validate_rules(seed), "rules[0].outcomes_since")
 
     def test_merge_seed_keeps_local_edits(self) -> None:
         data = json.loads(self.rules_path.read_text())
@@ -351,6 +362,60 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("hold_reason", nd)
         self.assertEqual(nd["outcomes"]["ignored_rate"], 0.5)
         self.assertIn("| hook-block |", md)
+
+    def _set_outcomes_since(self, rule_id: str, date: str | None) -> None:
+        path = self.root / ".github" / "retro" / "rules.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for rule in data["rules"]:
+            if rule["id"] == rule_id:
+                rule["outcomes_since"] = date
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    def test_outcomes_before_outcomes_since_are_discarded(self) -> None:
+        """Warnings the model never saw (exit-1 stderr) are no evidence for blocking."""
+        self._set_outcomes_since("no-new-deps", "2026-10-06")
+        for i in range(3):
+            _session(self.root, f"o{i}", f"2026-09-0{i + 1}", violations=1, rule="no-new-deps")
+            _outcomes(self.root, f"o{i}", "no-new-deps", repeated=[1, 1], ts="2026-09-20T10:00:00")
+        nd = self._rule(self._report()[0], "no-new-deps")
+        self.assertEqual(nd["outcomes"]["n"], 0)
+        self.assertEqual(nd.get("hold_reason"), "no_outcomes")
+        self.assertIsNone(nd.get("escalate_to"))
+        self.assertEqual(nd["decisions"]["warned"], 6)  # decisions are never filtered
+
+    def test_outcomes_count_without_outcomes_since(self) -> None:
+        self._set_outcomes_since("no-new-deps", None)
+        for i in range(3):
+            _session(self.root, f"p{i}", f"2026-09-0{i + 1}", violations=1, rule="no-new-deps")
+            _outcomes(self.root, f"p{i}", "no-new-deps", repeated=[1, 1], ts="2026-09-20T10:00:00")
+        nd = self._rule(self._report()[0], "no-new-deps")
+        self.assertEqual(nd["outcomes"]["n"], 6)
+        self.assertEqual(nd["escalate_to"], "hook-block")
+
+    def test_outcomes_since_boundary_uses_transcript_utc_stamps(self) -> None:
+        """Transcript outcomes carry `...Z` UTC stamps; the day itself counts."""
+        self._set_outcomes_since("no-new-deps", "2026-10-06")
+        for i in range(3):
+            _session(self.root, f"q{i}", f"2026-09-0{i + 1}", violations=1, rule="no-new-deps")
+            _outcomes(self.root, f"q{i}", "no-new-deps", repeated=[1], ts="2026-10-06T00:00:01.000Z")
+            _outcomes(self.root, f"q{i}", "no-new-deps", repeated=[1], ts="2026-10-05T23:59:59.000Z")
+        nd = self._rule(self._report()[0], "no-new-deps")
+        self.assertEqual(nd["outcomes"]["n"], 3)
+
+    def test_prose_edit_keeps_outcome_evidence(self) -> None:
+        """last_changed (any edit, e.g. rewording) never discards outcomes."""
+        self._set_outcomes_since("no-new-deps", None)
+        path = self.root / ".github" / "retro" / "rules.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for rule in data["rules"]:
+            if rule["id"] == "no-new-deps":
+                rule["last_changed"] = "2026-10-06"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        for i in range(3):
+            _session(self.root, f"r{i}", f"2026-09-0{i + 1}", violations=1, rule="no-new-deps")
+            _outcomes(self.root, f"r{i}", "no-new-deps", repeated=[1, 1], ts="2026-09-20T10:00:00")
+        nd = self._rule(self._report()[0], "no-new-deps")
+        self.assertEqual(nd["outcomes"]["n"], 6)
 
     def test_reconciled_outcomes_are_not_ignored(self) -> None:
         for i in range(3):

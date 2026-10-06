@@ -72,7 +72,7 @@ Work through the report and build a change list. Every change has exactly one of
 | type | when | target |
 |---|---|---|
 | `new-hook` | a rule with `status: over_threshold` and `enforcement: prose` (`escalate_to: hook-warn`) | new `.claude/hooks/<rule>-warn.py` + wiring in `.claude/settings.json`. It records a decision on every firing, and a violation only if the rule has no transcript detector, see rule 6 |
-| `edit-rule` (hook upgrade) | `enforcement: hook-warn`, over threshold, and the report says `escalate_to: hook-block`. A `hold:` value in that column means keep the warning, see rule 7 | the existing hook: exit 1 becomes exit 2 |
+| `edit-rule` (hook upgrade) | `enforcement: hook-warn`, over threshold, and the report says `escalate_to: hook-block`. A `hold:` value in that column means keep the warning, see rule 7 | the existing hook: `warn_model` with exit 0 becomes the reason on stderr with exit 2 (exit 2 blocks the call and hands stderr to the model) |
 | `edit-rule` (prose) | a rule whose wording is ambiguous AND whose evidence shows the ambiguity (for example the same path pattern in most events). Never to add emphasis, capitals, or "NOT an exemption" lists to an existing rule. | the instruction file named in `source` |
 | `add-rule` | a recurring `build_retry` program, `path_cluster`, or `new-dependency` pattern that no registry rule covers | `CLAUDE.md` / `.github/copilot-instructions.md` and a new registry entry |
 | `new-instruction-file` | a `path_cluster` with events in `>= deterministic_sessions` sessions under one directory prefix | `.github/instructions/<name>.instructions.md` with `applyTo` set to that prefix |
@@ -164,7 +164,7 @@ Every change carries the three plain sentences and the complete evidence block. 
 
 `specs/guardrails/spec.md`: one `## Requirement:` per change, stated as the behavior after the change, with one `### Scenario:` that the next retro can check (for example: "GIVEN 5 sessions after the hook ships, THEN graph-first events per session is below the rate_before in report.json").
 
-`tasks.md`: one task per change, referencing its patch file; then a task **Update registry** (set `last_changed` on touched rules, add or remove entries, then run `python3 .github/retro/retro.py --mark-retro <this session's id>` which writes `last_retro` with a UTC timestamp and the captured session count); then a task **Rollback** listing every file to delete or restore and every registry entry to revert. `Loosen:` tasks, if any, come before the registry task. The session id is in the hook payloads and in the transcript filename; if you cannot determine it, pass `unknown` and say so.
+`tasks.md`: one task per change, referencing its patch file; then a task **Update registry** (set `last_changed` on touched rules, and `outcomes_since` on rules whose hook behaviour changed (a new hook or a warn-to-block upgrade, never a prose edit), add or remove entries, then run `python3 .github/retro/retro.py --mark-retro <this session's id>` which writes `last_retro` with a UTC timestamp and the captured session count); then a task **Rollback** listing every file to delete or restore and every registry entry to revert. `Loosen:` tasks, if any, come before the registry task. The session id is in the hook payloads and in the transcript filename; if you cannot determine it, pass `unknown` and say so.
 
 `patches/<NN>-<slug>.md`: the exact edit. For an instruction file: the file path, the old block, the new block. For a new hook: the full file, starting with the provenance header, plus the `settings.json` block to add. For a prune: the block to remove and the registry entry to delete.
 
@@ -174,11 +174,11 @@ The rule broken most often in practice is `graph-first`. When you propose its ho
 
 - One hook file `.claude/hooks/graph-first-warn.py` wired twice in `.claude/settings.json` under `PreToolUse`: once with matcher `mcp__code-graph__.*`, once with matcher `Grep|Glob`.
 - On a code-graph tool call: create the marker `.coograph/graph-touched-<session_id>` and exit 0.
-- On Grep or Glob: if `.code-graph/graph.db` exists, the marker does not exist, and `.coograph/graph-warned-<session_id>` does not exist, print `[graph-first] Grep/Glob before any code-graph call this session. Call get_minimal_context or query_graph first.` to stderr, create the warned marker, exit 1. Otherwise exit 0.
+- On Grep or Glob: if `.code-graph/graph.db` exists, the marker does not exist, and `.coograph/graph-warned-<session_id>` does not exist, say `[graph-first] Grep/Glob before any code-graph call this session. Call get_minimal_context or query_graph first.` with `warn_model(payload, text)` from `_coograph_guard`, create the warned marker, exit 0. Otherwise exit 0 and print nothing. Never warn through stderr with exit 1: Claude Code keeps that text from the model (probe of 2026-10-06), so the warning would reach only the user's log.
 - Import `should_skip` from `_coograph_guard` like every other hook. Record a decision through `signals.emit_decision(cwd, payload, "graph-first", "warned", __file__)` at the warning, and with `"suppressed"` when the warned marker already exists. **Do not emit a violation.** `graph-first` already has a transcript detector (`capture-signals.py`), so a hook-emitted violation counts every event twice, see rule 6 in Step 2. The hook is measured by the detector's own `graph-first` count falling and by its row in the report's Decisions table.
 - Header line: `# generated by coograph-retro on <date> from openspec/changes/<dir>`.
 
-Model the file on `.claude/hooks/warn-scope.py` (payload parsing, guard import, stderr message, exit code). Do not invent a different structure.
+Model the file on `.claude/hooks/warn-scope.py` (payload parsing, guard import with its `warn_model` fallback, the warning through `warn_model`, exit 0). Do not invent a different structure.
 
 ## Step 5b: Prove the hook fires (hook changes only)
 
