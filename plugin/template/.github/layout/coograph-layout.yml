@@ -1,0 +1,30 @@
+# coograph:managed (sync refreshes this file while this line is here; delete the line to keep local edits)
+# Coograph instruction layout: budgets per tier, and docs that keep up with code.
+# Copied to .github/workflows/ by /coograph-init when you opt in.
+# Config: .github/layout/layout.json.
+# Skip the guard for one PR by putting the skip marker (default "[skip docs]")
+# in the PR title; `edited` below re-runs the check when the title changes.
+name: coograph-layout
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  layout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Instruction budget
+        run: python .github/layout/layout.py --budget
+      - name: Docs guard
+        env:
+          # Passed through env, never interpolated into the script.
+          COOGRAPH_PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.base_ref }}
+        run: python .github/layout/layout.py --guard "origin/$BASE_REF" HEAD

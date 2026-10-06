@@ -8,6 +8,10 @@ If the user types `/coograph-init` (or asks to "initialize the project", "set up
 
 If the user types `/coograph-retro` (or asks to "run a retro", "check the guardrails"), follow `.github/skills/coograph-retro/SKILL.md` exactly. It measures rule violations and session cost from signals captured in Claude Code sessions and proposes instruction and hook edits as an OpenSpec. It never applies. This tool does not capture signals itself; the skill still runs the analyzer and, when nothing was captured, says so.
 
+If the user types `/coograph-docs-restructure` (or asks to "restructure the docs", "shrink the instruction files"), follow `.github/skills/coograph-docs-restructure/SKILL.md` exactly. It proposes an OpenSpec first and migrates only after approval.
+
+Before editing a file or running a command, check `GOTCHAS.md` for entries whose `paths:` or `commands:` match it, and follow their Fix / rule.
+
 ## On session start
 
 1. Read `.github/copilot-instructions.md` — full project conventions.

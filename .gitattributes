@@ -1,0 +1,4 @@
+# The Workflow tool refuses a script with carriage returns ("control characters
+# that would be hidden in the approval dialog"), so the ultra-review workflow
+# must stay LF on every checkout, whatever core.autocrlf says.
+**/coograph-ultra-review/workflow.js text eol=lf

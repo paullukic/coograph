@@ -1069,6 +1069,155 @@ class OpenspecGateHookTests(unittest.TestCase):
         self.assertTrue(cap._active_openspec_exists(root))
 
 
+class GotchaHookTests(unittest.TestCase):
+    """gotcha-surface.py shows matching GOTCHAS.md entries once per session, never blocks."""
+
+    ENTRY = (
+        "## expo-env\n"
+        "- **Symptom:** `expo export` uses the old API URL\n"
+        "- **Cause:** `.env` wins over the shell.\n"
+        "- **Fix / rule:** change `.env.production`.\n"
+        "- **paths:** `apps/mobile/**`\n"
+        "- **commands:** `expo export`\n"
+        "- **confirmed:** 2026-10-01\n"
+    )
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name)
+        self.root = make_project(self.base / "proj")
+        (self.root / "GOTCHAS.md").write_text("# Gotchas\n\n" + self.ENTRY, encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _run(self, sid: str, tool: str, tid: str, root: Path | None = None, **inp) -> subprocess.CompletedProcess:
+        root = root or self.root
+        payload = {"hook_event_name": "PreToolUse", "tool_name": tool, "session_id": sid,
+                   "tool_use_id": tid, "cwd": str(root), "tool_input": inp}
+        return subprocess.run(
+            [sys.executable, str(root / ".claude" / "hooks" / "gotcha-surface.py")],
+            input=json.dumps(payload), capture_output=True, text=True,
+            env=_isolated_env(root, self.base), cwd=str(root),
+        )
+
+    def test_matching_edit_surfaces_once(self) -> None:
+        target = str(self.root / "apps" / "mobile" / "app.json")
+        first = self._run("q1", "Edit", "q1a", file_path=target)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        out = json.loads(first.stdout)["hookSpecificOutput"]
+        self.assertEqual(out["hookEventName"], "PreToolUse")
+        self.assertIn("## expo-env", out["additionalContext"])
+        self.assertIn("`.env` wins over the shell.", out["additionalContext"])
+        self.assertNotIn("permissionDecision", out)
+
+        second = self._run("q1", "Edit", "q1b", file_path=target)
+        self.assertEqual((second.returncode, second.stdout), (0, ""))
+
+        recs = read_signals(self.root)
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["kind"], "decision")
+        self.assertEqual(recs[0]["rule"], "gotchas")
+        self.assertEqual(recs[0]["evidence"], {
+            "action": "surfaced", "tool_use_id": "q1a", "hook": "gotcha-surface.py",
+            "path": "apps/mobile/app.json", "gotcha": "expo-env",
+        })
+
+    def test_new_session_surfaces_again(self) -> None:
+        target = str(self.root / "apps" / "mobile" / "app.json")
+        self._run("q2", "Edit", "a", file_path=target)
+        again = self._run("q3", "Edit", "b", file_path=target)
+        self.assertIn("expo-env", again.stdout)
+
+    def test_command_match(self) -> None:
+        proc = self._run("q4", "Bash", "c", command="npx expo export --platform web")
+        self.assertIn("expo-env", json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"])
+        rec = read_signals(self.root)[0]
+        self.assertEqual(rec["evidence"]["path"], "")
+        self.assertEqual(rec["evidence"]["gotcha"], "expo-env")
+
+    def test_no_match_is_silent(self) -> None:
+        # One tool_use_id per call: a shared id would let should_skip's dedupe
+        # return before matching runs, and the leg would pass vacuously.
+        for i, (tool, inp) in enumerate((("Edit", {"file_path": str(self.root / "README.md")}),
+                                         ("Bash", {"command": "npm test"}),
+                                         ("Read", {"file_path": str(self.root / "apps" / "mobile" / "app.json")}))):
+            proc = self._run("q5", tool, f"d{i}", **inp)
+            self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, "", ""), tool)
+        self.assertEqual(read_signals(self.root), [])
+        # positive control in the same session: the matching command does surface
+        proc = self._run("q5", "Bash", "d9", command="npx expo export")
+        self.assertIn("expo-env", proc.stdout)
+
+    def test_invalid_entry_is_never_shown(self) -> None:
+        (self.root / "GOTCHAS.md").write_text("## half\n- **paths:** `apps/**`\n", encoding="utf-8")
+        proc = self._run("q6", "Edit", "e", file_path=str(self.root / "apps" / "x.ts"))
+        self.assertEqual(proc.stdout, "")
+
+    def test_plugin_copy_silent_outside_coograph_projects(self) -> None:
+        """should_skip: the plugin copy acts only where coograph-init ran."""
+        (self.root / ".github" / "skills" / "coograph-init" / "SKILL.md").unlink()
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Edit", "session_id": "q11",
+                   "tool_use_id": "p1", "cwd": str(self.root),
+                   "tool_input": {"file_path": str(self.root / "apps" / "mobile" / "app.json")}}
+        proc = subprocess.run(
+            [sys.executable, str(self.root / ".claude" / "hooks" / "gotcha-surface.py"), "--plugin"],
+            input=json.dumps(payload), capture_output=True, text=True,
+            env=_isolated_env(self.root, self.base), cwd=str(self.root),
+        )
+        self.assertEqual((proc.returncode, proc.stdout), (0, ""))
+        self.assertEqual(read_signals(self.root), [])
+
+    def test_without_layout_module_does_nothing(self) -> None:
+        shutil.rmtree(self.root / ".github" / "layout")
+        proc = self._run("q7", "Edit", "f", file_path=str(self.root / "apps" / "mobile" / "app.json"))
+        self.assertEqual((proc.returncode, proc.stdout), (0, ""))
+
+    def test_surfaces_without_retro(self) -> None:
+        root = make_project(self.base / "noretro", rules=False)
+        shutil.rmtree(root / ".github" / "retro")
+        (root / "GOTCHAS.md").write_text(self.ENTRY, encoding="utf-8")
+        proc = self._run("q8", "Edit", "g", root=root, file_path=str(root / "apps" / "mobile" / "a.json"))
+        self.assertIn("expo-env", proc.stdout)
+        self.assertEqual(read_signals(root), [])
+
+    def test_gotcha_text_never_reaches_the_store(self) -> None:
+        """The entry body and the command text are the privacy boundary. The id
+        is the heading slug and is stored on purpose, so the sentinel goes in
+        every other part of the entry and in the command."""
+        body = (self.ENTRY.replace("old API URL", SENTINEL).replace(".env` wins", f".env` {SENTINEL} wins")
+                .replace("change `.env.production`", f"change `{SENTINEL}`")
+                .replace("`expo export`\n", f"`expo export`, `{SENTINEL}`\n"))
+        (self.root / "GOTCHAS.md").write_text(body, encoding="utf-8")
+        self._run("q9", "Edit", "h", file_path=str(self.root / "apps" / "mobile" / "app.json"))
+        self._run("q9b", "Bash", "i", command=f"npx expo export {SENTINEL}")
+        raw = (self.root / ".coograph" / "signals.jsonl").read_text(encoding="utf-8")
+        self.assertEqual(len(read_signals(self.root)), 2, raw)
+        self.assertNotIn(SENTINEL, raw)
+        self.assertNotIn(SENTINEL.lower(), raw)
+
+    def test_gotcha_id_is_sanitised_at_emit(self) -> None:
+        """emit_decision reduces any id to [A-Za-z0-9_-]{1,80}, whatever the caller passes."""
+        sig.emit_decision(self.root, {"session_id": "q12", "tool_use_id": "z"}, "gotchas", "surfaced",
+                          "gotcha-surface.py", "", gotcha=f"bad id! {SENTINEL} <x> " + "y" * 200)
+        rec = read_signals(self.root)[0]
+        self.assertRegex(rec["evidence"]["gotcha"], r"^[A-Za-z0-9_-]{1,80}$")
+        self.assertNotIn(" ", rec["evidence"]["gotcha"])
+
+    def test_outcome_has_no_reconciliation(self) -> None:
+        t = Transcript("q10")
+        tid = t.tool("Edit", file_path=str(self.root / "apps" / "mobile" / "app.json"))
+        t.result(tid)
+        sig.emit_decision(self.root, {"session_id": "q10", "tool_use_id": tid}, "gotchas", "surfaced",
+                          "gotcha-surface.py", str(self.root / "apps" / "mobile" / "app.json"), gotcha="expo-env")
+        decisions = [r for r in read_signals(self.root) if r["kind"] == "decision"]
+        outcomes = cap.derive_outcomes(cap.parse_transcript(t.write(self.base / "tx" / "q10.jsonl"), cap.DEFAULT_CORRECTION_PATTERNS),
+                                       self.root, decisions)
+        self.assertEqual(len(outcomes), 1)
+        self.assertIsNone(outcomes[0]["reconciled"])
+        self.assertTrue(outcomes[0]["proceeded"])
+
+
 class HookEmissionRulesTests(unittest.TestCase):
     """A hook may only record a signal for a rule nothing else observes.
 

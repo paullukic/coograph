@@ -97,6 +97,7 @@ class CommandsCarryTheModelFooter(unittest.TestCase):
     DELEGATING = [
         "coograph-review", "coograph-verify", "coograph-debug",
         "coograph-search", "coograph-plan", "coograph-new-ticket", "coograph-retro",
+        "coograph-docs-restructure",
     ]
 
     def test_every_delegating_command_explains_the_footer(self) -> None:

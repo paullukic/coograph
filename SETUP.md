@@ -30,21 +30,18 @@ Do not copy `.omc/`, `.claude/settings.local.json`, or `.github/code-graph/node_
 Open `.github/copilot-instructions.md` and fill every `_TBD_` and `<!-- FILL: ... -->` section:
 
 - **Stack table** — your language, framework, ORM, testing tools
-- **Commands table** — dev, build, lint, test, format, typecheck
 - **Project Structure** — key directories and their purpose
 - **Code Style** — language-specific rules (functions, imports, exports)
 - **Naming Conventions** — your project's patterns
 - **Data Layer, Testing, API Design, i18n** — fill or delete as appropriate
+- **Branching Strategy**: your branch naming convention
 - **Project-Specific Rules** — domain invariants, module boundaries, naming restrictions
 
-Then fill `CLAUDE.md`:
-- **Quick Reference** commands table
-- **Key Paths** — your actual source/component/API paths
-- **Branching Strategy** — your branch naming convention
+Then fill `AGENTS.md`:
+- **Commands table**: dev, build, lint, test, format, typecheck
+- **Routing table**: one row per area: the files you touch, the doc to read first
 
-And `AGENTS.md`:
-- Stack one-liner
-- Structure summary
+`CLAUDE.md` needs nothing: it imports `AGENTS.md` and `.github/copilot-instructions.md` with `@` and adds the Claude-only sections. Each rule lives in exactly one of the three files; `python3 .github/layout/layout.py --budget` checks the sizes (see `.github/layout/README.md`).
 
 Verification — grep for remaining placeholders:
 ```bash
@@ -134,7 +131,7 @@ The graph database is generated — never commit it.
 
 ## 4. Communication style
 
-`.github/instructions/brutal-honesty.instructions.md` ships with the template. VS Code Copilot loads it automatically (`applyTo: "**"` matches every file). Claude Code reads it via the directive in `CLAUDE.md` § Communication Style at session start.
+`.github/instructions/brutal-honesty.instructions.md` ships with the template. VS Code Copilot loads it automatically (`applyTo: "**"` matches every file). Claude Code reads it via the Pre-flight step in `AGENTS.md`, which `CLAUDE.md` imports.
 
 No manual copy required.
 

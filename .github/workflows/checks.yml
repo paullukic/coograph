@@ -53,6 +53,22 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s .github/retro/tests -v
 
+  layout:
+    name: instruction layout (tests + template budget)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Run tests
+        run: python -m unittest discover -s .github/layout/tests -v
+      - name: Template stays within budget
+        run: python .github/layout/layout.py --budget --cwd .
+
   code-graph-tests:
     name: code-graph unit tests
     runs-on: ${{ matrix.os }}

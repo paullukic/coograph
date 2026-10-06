@@ -39,7 +39,12 @@ UV_PYTHON = "3.12"
 # last_retro must survive a sync. New seeded rules reach it from
 # rules.seed.json (which IS synced) through `retro.py --merge-seed`, see
 # _sync_retro. Applies to every synced tree; only .github/retro/ has one.
-SKIP_FILES = {"CLAUDE.md", "copilot-instructions.md", "config.yaml", "rules.json"}
+# layout.json is the same idea for .github/layout/ (see _sync_layout), and
+# GOTCHAS.md is project knowledge, seeded once by init and never touched again.
+SKIP_FILES = {
+    "CLAUDE.md", "copilot-instructions.md", "config.yaml", "rules.json",
+    "layout.json", "GOTCHAS.md",
+}
 
 # Paths a previous template version placed in consumer projects but that
 # have since been renamed or removed. Each sync run deletes these so the
@@ -261,6 +266,76 @@ def _sync_retro(path: Path, prefix: str, dry_run: bool = False) -> int:
     return n
 
 
+WORKFLOW_MARKER = "coograph:managed"
+
+
+def _sync_layout(path: Path, prefix: str, dry_run: bool = False) -> int:
+    """Copy .github/layout/ (checker, seed, CI assets; never tests/ or
+    layout.json), seed or merge the project's layout.json, and refresh the
+    layout workflow only in projects that opted into it at init."""
+    src = TEMPLATE_ROOT / ".github" / "layout"
+    if not src.exists():
+        return 0
+    dst = path / ".github" / "layout"
+    n = _copy_dir(src, dst, dry_run=dry_run)
+    log.info("  %s.github/layout  %d files", prefix, n)
+    seed = src / "layout.seed.json"
+    if seed.exists():
+        if dry_run:
+            log.info("  %s.github/layout/layout.json  would seed or merge", prefix)
+        else:
+            try:
+                out = subprocess.run(
+                    [sys.executable, str(dst / "layout.py"), "--cwd", str(path),
+                     "--merge-seed", str(seed)],
+                    capture_output=True, text=True, timeout=30,
+                )
+                log.info("  %s%s", prefix, (out.stdout or out.stderr).strip())
+            except (OSError, subprocess.SubprocessError) as e:
+                log.warning("  layout --merge-seed failed: %s", e)
+    workflow = path / ".github" / "workflows" / "coograph-layout.yml"
+    workflow_src = src / "coograph-layout.yml"
+    if workflow.exists() and workflow_src.exists():
+        # Refreshed only while it still carries the managed marker: a project
+        # that deleted the line has edited the workflow and owns it now.
+        try:
+            managed = WORKFLOW_MARKER in workflow.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            managed = False
+        if managed:
+            if not dry_run:
+                shutil.copy2(workflow_src, workflow)
+            log.info("  %s.github/workflows/coograph-layout.yml  1 file", prefix)
+            n += 1
+        else:
+            log.info("  %s.github/workflows/coograph-layout.yml  kept (customized: no %s line)",
+                     prefix, WORKFLOW_MARKER)
+    return n
+
+
+def _sync_agents_md(path: Path, prefix: str, dry_run: bool = False) -> int:
+    """Create AGENTS.md when absent; never overwrite it. Project-owned once it
+    exists: init fills it and treats it as customized (Step 1b)."""
+    src = TEMPLATE_ROOT / "AGENTS.md"
+    if not src.exists():
+        return 0
+    if (path / "AGENTS.md").exists():
+        log.info("  %sAGENTS.md  kept (project-owned)", prefix)
+        return 0
+    if not dry_run:
+        shutil.copy2(src, path / "AGENTS.md")
+    log.info("  %sAGENTS.md  1 file (created)", prefix)
+    return 1
+
+
+def _imports_agents_md(path: Path) -> bool:
+    try:
+        text = (path / "CLAUDE.md").read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return False
+    return any(line.strip() == "@AGENTS.md" for line in text.splitlines())
+
+
 def _sync_mcp_config(src: Path, dst: Path, prefix: str, dry_run: bool = False) -> bool:
     """Write the project's .mcp.json, merging rather than replacing.
 
@@ -366,6 +441,8 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
     # Retro analyzer + registry: every tool runs the /coograph-retro skill,
     # so this is always-copy too. Capture hooks are Claude-only (below).
     total += _sync_retro(path, prefix, dry_run=dry_run)
+    # Layout checker: tool-neutral like retro, so always-copy.
+    total += _sync_layout(path, prefix, dry_run=dry_run)
     total += _seed_models_block(path, prefix, dry_run=dry_run)
 
     # Claude Code commands
@@ -403,6 +480,12 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
             log.info("  %s.claude/hooks  %d files", prefix, n)
             total += n
 
+        # The tiered CLAUDE.md gets every hard rule through `@AGENTS.md`;
+        # without the file Claude Code skips the import silently. Projects
+        # still on a self-contained CLAUDE.md do not import it and get nothing.
+        if _imports_agents_md(path):
+            total += _sync_agents_md(path, prefix, dry_run=dry_run)
+
         # Committed settings.json wires the hooks. Downstream users put
         # personal overrides in settings.local.json (not synced).
         settings_src = TEMPLATE_ROOT / ".claude" / "settings.json"
@@ -420,12 +503,7 @@ def sync_project(project: dict, dry_run: bool = False) -> bool:
                 n = _copy_dir(src, path / ".github" / subdir, dry_run=dry_run)
                 log.info("  %s.github/%s  %d files", prefix, subdir, n)
                 total += n
-        agents_md = TEMPLATE_ROOT / "AGENTS.md"
-        if agents_md.exists():
-            if not dry_run:
-                shutil.copy2(agents_md, path / "AGENTS.md")
-            log.info("  %sAGENTS.md  1 file", prefix)
-            total += 1
+        total += _sync_agents_md(path, prefix, dry_run=dry_run)
 
     # Code graph server + parsers + MCP config
     if code_graph:

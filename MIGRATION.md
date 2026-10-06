@@ -4,6 +4,41 @@
 
 ---
 
+## 2026-10-06: Instruction budget by tier (plugin 1.8.0, issue #43)
+
+New: `.github/layout/` (`layout.py`, `layout.seed.json`, README, an opt-in CI workflow and pre-commit hook), `GOTCHAS.md`, `.claude/hooks/gotcha-surface.py`, the `/coograph-docs-restructure` skill, and a restructured template: hard rules and workflow live once in `AGENTS.md`, code conventions in `.github/copilot-instructions.md`, and `CLAUDE.md` imports both with `@`.
+
+**Fixed: sync no longer overwrites `AGENTS.md`.** Before this, every sync of a project with the `vscode` tool copied the template `AGENTS.md` over the project's, destroying any edits. Sync now creates `AGENTS.md` only when it is missing. If yours was overwritten, restore it from git history (`git log -p -- AGENTS.md`).
+
+Registered projects get, on the next `git pull` of coograph:
+
+- `.github/layout/` and a `layout.json` seeded from `layout.seed.json`. It is yours from then on and is never overwritten. For a monorepo, set `routers` to one `<workspace>/AGENTS.md` glob per workspace; for a single package set it to `[]`.
+- The gotcha hook, wired in `.claude/settings.json`. It does nothing until `GOTCHAS.md` has entries. Copy the template's `GOTCHAS.md` for the format, or let `/coograph-debug` and `/coograph-retro` propose entries.
+
+Every Claude Code session start now adds a `[layout]` line when the instruction files are over budget, and `retro.py --status` prints a `layout:` line, with or without captured signals. A STRUCTURAL project is told to run `/coograph-docs-restructure` there, not only in a retro report.
+
+On Windows with `core.autocrlf=true`, add `**/coograph-ultra-review/workflow.js text eol=lf` to your `.gitattributes` and re-checkout that file, or `/coograph-ultra-review` is refused for "control characters".
+
+Check where you stand:
+
+```bash
+python3 .github/layout/layout.py --budget
+```
+
+- **Within budget:** nothing to do.
+- **Over budget but not STRUCTURAL:** move duplicated rules to the one file that owns them (the report lists repeated paragraphs), and delete dated sections.
+- **STRUCTURAL** (maps that grew into changelogs, a root file far over budget): run `/coograph-docs-restructure`. It writes an OpenSpec first and changes nothing until you approve.
+
+**Budget semantics changed.** Retro's budget used to be `thresholds.instruction_token_budget` (8000) over `CLAUDE.md`, root `AGENTS.md`, `copilot-instructions.md` and `.github/instructions/*.md`. With `.github/layout/` installed it is `budgets.always_loaded` in `layout.json` (default 9000) over the always-loaded files with `@` imports resolved. `.github/instructions/*.md` count as on-demand now. Your reported total may drop, and the budget rises, so a project that read OVER may now read within. The old threshold still applies to projects without `.github/layout/`.
+
+Manual steps, because `sync.py` never overwrites `CLAUDE.md`, `AGENTS.md`, or `.github/copilot-instructions.md`:
+
+1. Optional, recommended: adopt the new root layout. Compare your three files with the template's. The anchors in `.github/layout/tests/test_layout.py` (`TemplateTests.ANCHORS`) list every rule and the one file it now lives in. `/coograph-docs-restructure` does this for you, and is the safer route for large files.
+2. Add the routing row and gotcha pointer to your `AGENTS.md` (template § Routing), and the `/coograph-docs-restructure` row to the delegation table in `CLAUDE.md`.
+3. Optional: run `/coograph-init` again and answer question 8 to add the CI workflow or the pre-commit hook. Init is idempotent and does not touch customized instruction files.
+
+---
+
 ## 2026-09-19: Retro, self-tuning guardrails (plugin 1.1.0)
 
 New: `.github/retro/` (analyzer, registry, README), `.claude/hooks/capture-signals.py` and `_coograph_signals.py`, `SessionEnd` + `SessionStart` wiring in `.claude/settings.json`, the `/coograph-retro` skill, the `@Retro` agent, and a retro prompt at the end of `coograph-apply` and `coograph-archive`.

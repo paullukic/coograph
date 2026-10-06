@@ -22,7 +22,9 @@ Run:
 python3 .github/retro/retro.py --status
 ```
 
-Branch on the exit code and the line printed:
+A `layout:` line may come first. It reports the instruction layout and never changes the exit code. When it says `STRUCTURAL`, tell the user `/coograph-docs-restructure` is the fix, whatever the exit code, **before** stopping on any row below. A project with no captured signals still needs to hear it.
+
+Branch on the exit code and the `retro:` line printed:
 
 | exit | line | what to do |
 |---|---|---|
@@ -75,12 +77,16 @@ Work through the report and build a change list. Every change has exactly one of
 | `add-rule` | a recurring `build_retry` program, `path_cluster`, or `new-dependency` pattern that no registry rule covers | `CLAUDE.md` / `.github/copilot-instructions.md` and a new registry entry |
 | `new-instruction-file` | a `path_cluster` with events in `>= deterministic_sessions` sessions under one directory prefix | `.github/instructions/<name>.instructions.md` with `applyTo` set to that prefix |
 | `prune-rule` | an id in `prune_candidates` | remove the prose, remove the registry entry |
+| `structural` | `layout.structural` is true in `report.json` | one change, no patch: run `/coograph-docs-restructure`. It replaces every `add-rule`, `new-instruction-file` and prose `edit-rule` in this retro (list them under Watching); small edits cannot close a structural gap |
+| `add-gotcha` | a `build_retry` row in `>= deterministic_sessions` sessions whose program no `GOTCHAS.md` entry names in `commands:` | a new `GOTCHAS.md` entry (format in `.github/layout/README.md`); `Cause` and `Fix / rule` come from what the sessions show, never invented. If you cannot state the cause from evidence, list it under Watching |
+| `prune-gotcha` | an id in `layout.stale_gotchas` (its `paths:` match no file, tracked or on disk) | remove the entry from its `GOTCHAS.md`; the task says to confirm the path is really gone before deleting, since a path can be created at build time |
+| `escalate-gotcha` | a row in `gotchas` with `retry_sessions >= deterministic_sessions` (surfaced, and a matching command still failed and was retried; approximate, because a build retry records only the first token, so a runner like `npx` counts as a match) | prose proposal for a lint rule or hook that makes the trap impossible; no patch, the user decides the mechanism |
 
 Rules that decide what survives:
 
-1. **Evidence first.** A rule listed only under `supporting_only`, or whose only signals are `user-correction`, gets no change of any type. It may appear in a "Watching" list.
+1. **Evidence first.** A rule listed only under `supporting_only`, or whose only signals are `user-correction`, gets no change of any type. The same holds for gotchas: `user-correction` alone never creates one. It may appear in a "Watching" list.
 2. **Escalate, do not shout.** A prose rule that is still violated becomes a hook. If a hook already exists and its warnings are ignored, warn becomes block (rule 7). Rewording an existing rule louder is never a proposal; the report shows that does not work.
-3. **Budget.** If `over_budget` is true, every `add-rule` or `new-instruction-file` must be paired in the same proposal with a `prune-rule` or a token-reducing `edit-rule`, and the summed token delta must be zero or negative.
+3. **Budget.** The budget is the always-loaded tier (`instruction_tokens_total` against `instruction_token_budget`; with `.github/layout/` installed that is `layout.json` `budgets.always_loaded`, `@` imports resolved). If `over_budget` is true, every `add-rule` or `new-instruction-file` must be paired in the same proposal with a `prune-rule` or a token-reducing `edit-rule`, and the summed token delta must be zero or negative.
 4. **Self-targeting is allowed, loosening is gated.** You may propose changes to `.github/skills/coograph-retro/SKILL.md`, the detectors in `.claude/hooks/capture-signals.py`, and `correction_patterns`. You may not change `thresholds`, set a pattern or detector to disabled, or raise a threshold unless `tasks.md` carries a task whose title starts with `Loosen:` naming the field. Without it, drop the change and note it under Risks.
 5. **Numbers come from the report.** Every count, session count, date, and token figure in the proposal is copied from `report.json`. If a number is not there, it is not in the proposal.
 6. **A hook records decisions, and a violation only when nothing else observes the rule.** Every rule hook calls `signals.emit_decision(cwd, payload, rule, action, __file__, path)` when it warns, blocks, or would have warned again in the same session (`suppressed`). Decisions are never counted as violations; `capture-signals.py` joins them to the transcript by `tool_use_id` at session end and writes one `outcome` per decision (`proceeded`, `corrected`, `reconciled`, `repeated`). A hook emits a **violation** only when its rule has no detector in `capture-signals.py`: `scope` and `generated-files`. Every other rule (`graph-first`, `openspec-gate`, `no-new-deps`, `defect`, `user-correction`) is already recorded from the transcript, and a hook-emitted violation is counted a second time: `replace_session` keeps hook-origin records, `summarize` counts every violation equally, and `retro.py` never reads `origin`. Say in the evidence block what the hook records, and why.
@@ -92,7 +98,7 @@ If the change list is empty, still write the OpenSpec with the Why section, an e
 
 ## Step 3: Scope
 
-Default scope is this project: targets are its `CLAUDE.md`, `.github/copilot-instructions.md`, `.github/instructions/`, `.claude/hooks/`, `.claude/settings.json`, `.github/retro/rules.json`.
+Default scope is this project: targets are its `CLAUDE.md`, `AGENTS.md` (root and workspace routers), `.github/copilot-instructions.md`, `.github/instructions/`, `GOTCHAS.md` files, `.github/layout/layout.json`, `.claude/hooks/`, `.claude/settings.json`, `.github/retro/rules.json`. A rule is added to the one file that owns its kind, never to several. Code conventions: `copilot-instructions.md`. Claude-only: `CLAUDE.md`. Hard rules and workflow: `AGENTS.md` **only when `CLAUDE.md` imports it** (`@AGENTS.md`) or the project does not use Claude Code; a project still on a self-contained `CLAUDE.md` keeps them there, because Claude Code does not load `AGENTS.md` without the import.
 
 `--templates` (maintainer mode) is honoured only when both `templates/` and `setup.sh` exist at the repo root, meaning this is a coograph checkout. Then targets are the template files so `sync.py` propagates them. Otherwise say maintainer mode is unavailable here and run in project scope.
 

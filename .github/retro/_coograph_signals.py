@@ -75,7 +75,10 @@ DEFAULT_MAX_SESSIONS = 500
 
 TOOLS = {"claude-code", "codex", "opencode", "unknown"}
 KINDS = {"session", "violation", "event", "decision", "outcome"}
-DECISION_ACTIONS = {"warned", "blocked", "suppressed"}
+# "surfaced" is the gotcha hook's action: it showed a GOTCHAS.md entry. It is
+# informational, never a warning, and its rule ("gotchas") is not a registry rule.
+DECISION_ACTIONS = {"warned", "blocked", "suppressed", "surfaced"}
+GOTCHA_ID_MAX = 80
 ORIGINS = {"transcript", "hook"}
 CONFIDENCES = {"deterministic", "heuristic"}
 ENFORCEMENTS = {"prose", "hook-warn", "hook-block"}
@@ -143,7 +146,7 @@ ALLOWED_EVIDENCE: dict[str, set[str]] = {
     "user-correction": {"pattern", "after_tool"},
     "defect": {"fix", "origin", "files", "count", "days"},
     "new-dependency": {"program", "manifest", "via"},
-    "decision": {"action", "tool_use_id", "hook", "path"},
+    "decision": {"action", "tool_use_id", "hook", "path", "gotcha"},
     "outcome": {"tool_use_id", "action", "proceeded", "corrected", "reconciled", "repeated"},
     "session": {
         "message_count", "tools_used", "tool_calls_total", "edited_files",
@@ -544,17 +547,28 @@ def emit(cwd: Path, record: dict | None) -> bool:
 
 
 def emit_decision(cwd: Path, payload: dict, rule: str, action: str, hook: str,
-                  path: str = "") -> bool:
+                  path: str = "", gotcha: str = "") -> bool:
     """Record what a hook decided about one tool call. Never raises.
 
     Every rule hook calls this at the moment it warns, blocks, or would have
     warned again in the same session ("suppressed"). The record is joined to
     the transcript by tool_use_id at capture time to learn what followed. It
     is never counted as a violation; thresholds read kind == "violation" only.
+
+    `gotcha` is a GOTCHAS.md entry id, reduced to [A-Za-z0-9_-] so no free
+    text from the entry can reach the store.
     """
     if action not in DECISION_ACTIONS:
         return False
     try:
+        evidence = {
+            "action": action,
+            "tool_use_id": str(payload.get("tool_use_id") or "")[:64],
+            "hook": Path(hook).name[:60],
+            "path": rel_path(cwd, path) if path else "",
+        }
+        if gotcha:
+            evidence["gotcha"] = _SAFE_ID_RE.sub("", str(gotcha))[:GOTCHA_ID_MAX]
         record = make_record(
             tool="claude-code",
             session_id=str(payload.get("session_id") or "unknown"),
@@ -563,12 +577,7 @@ def emit_decision(cwd: Path, payload: dict, rule: str, action: str, hook: str,
             detector="decision",
             confidence="deterministic",
             origin="hook",
-            evidence={
-                "action": action,
-                "tool_use_id": str(payload.get("tool_use_id") or "")[:64],
-                "hook": Path(hook).name[:60],
-                "path": rel_path(cwd, path) if path else "",
-            },
+            evidence=evidence,
         )
         return emit(Path(cwd), record)
     except Exception:
@@ -888,7 +897,48 @@ def transcripts_dir_for(cwd: Path) -> Path | None:
 CALL_TO_ACTION = "run /coograph-retro"
 
 
+LAYOUT_REL = Path(".github") / "layout" / "layout.py"
+RESTRUCTURE = "run /coograph-docs-restructure"
+
+
+def layout_notice(cwd: Path) -> str | None:
+    """`[layout] ...` when the instruction files need attention, else None.
+
+    Independent of Retro: a structural layout costs tokens every session
+    whether or not any signal was captured, so it is reported at session
+    start instead of waiting for a retro that may never run. Never raises.
+    """
+    path = Path(cwd) / LAYOUT_REL
+    if not path.is_file():
+        return None
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("coograph_layout", path)
+        layout = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(layout)
+        config, source = layout.load_config(Path(cwd))
+        m = layout.measure(Path(cwd), config, source)
+    except Exception:
+        return None
+    if m.get("structural"):
+        reasons = m.get("structural_reasons") or []
+        more = f" (+{len(reasons) - 1} more)" if len(reasons) > 1 else ""
+        head = f"[layout] STRUCTURAL: {reasons[0] if reasons else 'over budget'}{more}"
+        call = f", {RESTRUCTURE}"
+        return head[: 160 - len(call)] + call
+    if m.get("over"):
+        return (f"[layout] {len(m['over'])} instruction file(s) over budget, "
+                "see python3 .github/layout/layout.py --budget")
+    return None
+
+
 def status_line(cwd: Path) -> str | None:
+    """SessionStart text: the retro line, plus the layout notice when there is one."""
+    lines = [line for line in (_retro_line(cwd), layout_notice(cwd)) if line]
+    return "\n".join(lines) or None
+
+
+def _retro_line(cwd: Path) -> str | None:
     """One line for SessionStart, or None when there is nothing to say."""
     rules = load_rules(cwd)
     if rules is None:
