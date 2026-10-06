@@ -18,8 +18,16 @@ Read `.github/layout/README.md` once before starting. It defines the tiers, the
 config, the feature-doc frontmatter and the gotcha format.
 
 The rule that matters most: **no current-state fact is lost, and no stale fact
-survives.** Old map sections are often out of date. Every fact you keep is
-checked against the code; every fact you drop is listed with a reason.
+survives.** Old map sections are often out of date. Every fact is checked
+against the code and gets one of three marks:
+
+- `[x] file:line`: the code confirms it. Keep it.
+- `[kept: not in code]`: the code can neither confirm nor contradict it (a deploy
+  step, a console setting, a renewal date, team process). Keep it: in the area
+  doc, or in `GOTCHAS.md` when it is a trap. "Not provable from code" is never a
+  reason to drop.
+- `[dropped: <reason>]`: only when the code contradicts it, it is history rather
+  than current state, or it duplicates another area.
 
 ---
 
@@ -27,9 +35,13 @@ checked against the code; every fact you drop is listed with a reason.
 
 Look for a non-archived `openspec/changes/*-docs-restructure/`.
 
-- **Found, no `proposal.md` yet:** an aborted Phase 1. Reuse that directory and its date, keeping its `notes/layout-before.json` (taken before any edit), and continue at Step 2. Never create a second directory with a new date.
-- **Found, not yet approved:** show it and ask whether to continue with it or discard it. Never start a second one alongside it.
-- **Found and approved:** this is a resume. Go to Phase 2 and continue at the first unticked task in its `tasks.md`. Do not re-run Phase 1. Do not rewrite anything under its `notes/` (including `notes/layout-before.json`): it holds the only record of the original facts and the before numbers.
+Approval is recorded on disk, not only in the conversation: the line
+`approved: <YYYY-MM-DD>` in the change's `.openspec.yaml` (Phase 1 writes it
+when the user approves, before the first Phase 2 edit).
+
+- **Found, no `proposal.md` yet:** an aborted Phase 1. Reuse that directory and its date, and continue at Step 2. Keep `notes/layout-before.json` when it parses as JSON with a `tiers` key; otherwise retake it (Step 1). Never create a second directory with a new date.
+- **Found, `proposal.md` but no `approved:` line:** show it and ask whether to continue with it or discard it. Never start a second one alongside it.
+- **Found and approved:** this is a resume. Go to Phase 2 and continue at the first unticked task in its `tasks.md`. Do not re-run Phase 1. Never regenerate `notes/areas/*.md`, `notes/gotchas.md`, `notes/rules.md` or `notes/layout-before.json`: they hold the only record of the original facts and the before numbers. Phase 2 only adds marks to them (`[x]`, `[kept: ...]`, `[dropped: ...]`) and writes `notes/layout-after.json`.
 - **An area name was given** (`/coograph-docs-restructure auth`): it applies only to an approved restructure. Run just that area's task. If no approved restructure exists, say so and stop.
 - **Not found:** Phase 1.
 
@@ -45,7 +57,7 @@ archived with it (a later restructure then takes a fresh one):
 ```bash
 python3 .github/layout/layout.py --budget
 mkdir -p openspec/changes/<YYYY-MM-DD>-docs-restructure/notes
-python3 .github/layout/layout.py --json > openspec/changes/<YYYY-MM-DD>-docs-restructure/notes/layout-before.json
+python3 .github/layout/layout.py --json > openspec/changes/<YYYY-MM-DD>-docs-restructure/notes/layout-before.tmp   && mv openspec/changes/<YYYY-MM-DD>-docs-restructure/notes/layout-before.tmp openspec/changes/<YYYY-MM-DD>-docs-restructure/notes/layout-before.json
 ```
 
 If `.github/layout/layout.py` is missing, the project predates the layout
@@ -106,7 +118,7 @@ Use the code-graph first (`get_minimal_context`), then `git ls-files` patterns.
   one new home.
 - `tasks.md`, in this order:
   1. one task per area (`docs/features/<area>.md`, every fact in
-     `notes/areas/<area>.md` ticked or dropped with a reason);
+     `notes/areas/<area>.md` marked `[x]`, `[kept: ...]` or `[dropped: <reason>]`);
   2. `GOTCHAS.md` (every candidate placed or dropped with a reason);
   3. routers (each workspace's `AGENTS.md` cut to commands, gotcha pointers and
      an area index, plus a one-line `<workspace>/CLAUDE.md` holding
@@ -115,11 +127,13 @@ Use the code-graph first (`get_minimal_context`), then `git ls-files` patterns.
      filled);
   5. `.github/layout/layout.json`;
   6. verification: `layout.py --budget` exits 0, every `notes/areas/*.md` line
-     is ticked or dropped, `/coograph-review` run.
+     is marked, `/coograph-review` run.
 
 **Stop.** Tell the user what the restructure will do in five lines (areas,
 files removed, files created, before and after budgets) and wait for approval.
-Do not edit any instruction file before approval.
+Do not edit any instruction file before approval. On approval, add
+`approved: <YYYY-MM-DD>` to the change's `.openspec.yaml` first; Step 0 reads it
+to tell a resume from a fresh start.
 
 ---
 
@@ -138,9 +152,10 @@ supports it). Give it:
 - the template below;
 - the instruction: **check every fact against the code with the code-graph
   first** (`get_minimal_context`, `query_graph`), then by reading the files.
-  Keep a fact only when the code confirms it. Mark it `[x]` with the confirming
-  `file:line`, or `[dropped: <reason>]` (removed from the code, contradicted by
-  the code, history rather than current state, duplicate of another area).
+  Mark it `[x]` with the confirming `file:line`; `[kept: not in code]` when the
+  code can neither confirm nor contradict it (keep it in the doc); or
+  `[dropped: <reason>]` only when the code contradicts it, it is history, or it
+  duplicates another area.
 
 Feature doc template:
 
@@ -173,8 +188,9 @@ text). No dated headings, no "added in", no "(openspec ...)": history lives in
 ### Gotchas, routers, root files
 
 - `GOTCHAS.md`: entries in the format of `.github/layout/README.md`, each under
-  800 bytes. A gotcha you cannot confirm is still current goes under
-  `notes/gotchas.md` as dropped, with the reason.
+  800 bytes. A gotcha the code contradicts (the trap was
+  fixed) is dropped in `notes/gotchas.md` with the reason; one the code cannot
+  confirm either way is kept.
 - Routers: commands for that workspace, the gotcha pointer, and an area index
   (`auth → docs/features/auth.md`). Nothing else. About 2K tokens.
 - Root files: apply `notes/rules.md`. Fill the routing table in `AGENTS.md`
@@ -188,8 +204,9 @@ python3 .github/layout/layout.py --json > openspec/changes/<YYYY-MM-DD>-docs-res
 ```
 
 `--budget` must exit 0. Report before and after per tier from the two JSON
-files. Every line in every `notes/areas/*.md` and `notes/gotchas.md` is ticked
-or dropped with a reason; count both and report the counts. Then run
+files. Every line in every `notes/areas/*.md` and `notes/gotchas.md` carries a
+mark (`[x]`, `[kept: ...]` or `[dropped: <reason>]`); count each mark and report
+the counts. Then run
 `/coograph-review` on the change.
 
 If `--budget` still fails, the area split is wrong: split the over-budget doc,
@@ -198,8 +215,10 @@ update the OpenSpec, and say so. Do not trim facts to fit.
 ## Guardrails
 
 - No instruction file is edited before the user approves the OpenSpec.
-- No fact is kept without a code check, and no fact is dropped without a reason
-  in the notes.
+- Every fact is checked against the code. A fact the code cannot confirm or
+  contradict is kept and marked; a fact is dropped only when the code
+  contradicts it, it is history, or it is a duplicate, with the reason in the
+  notes.
 - No dated sections in any new file.
 - Each rule is stated in exactly one file.
 - `GOTCHAS.md` is never always-loaded: never `@`-import it.

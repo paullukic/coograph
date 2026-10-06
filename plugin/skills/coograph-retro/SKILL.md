@@ -98,7 +98,7 @@ If the change list is empty, still write the OpenSpec with the Why section, an e
 
 ## Step 3: Scope
 
-Default scope is this project: targets are its `CLAUDE.md`, `AGENTS.md` (root and workspace routers), `.github/copilot-instructions.md`, `.github/instructions/`, `GOTCHAS.md` files, `.github/layout/layout.json`, `.claude/hooks/`, `.claude/settings.json`, `.github/retro/rules.json`. A rule is added to the one file that owns its kind (hard rules and workflow: `AGENTS.md`; code conventions: `copilot-instructions.md`; Claude-only: `CLAUDE.md`), never to several.
+Default scope is this project: targets are its `CLAUDE.md`, `AGENTS.md` (root and workspace routers), `.github/copilot-instructions.md`, `.github/instructions/`, `GOTCHAS.md` files, `.github/layout/layout.json`, `.claude/hooks/`, `.claude/settings.json`, `.github/retro/rules.json`. A rule is added to the one file that owns its kind, never to several. Code conventions: `copilot-instructions.md`. Claude-only: `CLAUDE.md`. Hard rules and workflow: `AGENTS.md` **only when `CLAUDE.md` imports it** (`@AGENTS.md`) or the project does not use Claude Code; a project still on a self-contained `CLAUDE.md` keeps them there, because Claude Code does not load `AGENTS.md` without the import.
 
 `--templates` (maintainer mode) is honoured only when both `templates/` and `setup.sh` exist at the repo root, meaning this is a coograph checkout. Then targets are the template files so `sync.py` propagates them. Otherwise say maintainer mode is unavailable here and run in project scope.
 

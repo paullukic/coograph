@@ -627,7 +627,7 @@ Show the user the first paragraph it prints (the plain-language opener) and the 
 Run this step only if Step 1 question 8 is not `no`.
 
 1. **Budget now.** `cd <target> && python3 .github/layout/layout.py --budget`. Report the per-tier lines. If it prints `STRUCTURAL` (an existing project with large maps), say so and point to `/coograph-docs-restructure`; do not try to fix it here.
-2. **CI** (`CI + pre-commit` or `CI only`): copy `.github/layout/coograph-layout.yml` to `<target>/.github/workflows/coograph-layout.yml`. Do not overwrite an existing file of that name without asking. `sync.py` refreshes it later only because it exists.
+2. **CI** (`CI + pre-commit` or `CI only`): copy `.github/layout/coograph-layout.yml` to `<target>/.github/workflows/coograph-layout.yml`. Do not overwrite an existing file of that name without asking. `sync.py` refreshes it later only while its first line carries `coograph:managed`; tell the user to delete that line if they edit the workflow.
 3. **Pre-commit** (`CI + pre-commit` or `pre-commit only`): find the git dir (`git -C <target> rev-parse --git-dir`). If `<git-dir>/hooks/pre-commit` does not exist, copy `.github/layout/pre-commit` there and `chmod +x` it. If one exists, do not replace it: add the line `"$(git rev-parse --show-toplevel)/.github/layout/pre-commit" || exit 1` once, at the end, or just before the last line when that line starts with `exec` (nothing after an `exec` runs), and tell the user. Local only, like the code-graph hooks: each developer installs it once.
 
 ## Guardrails

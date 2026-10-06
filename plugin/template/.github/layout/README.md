@@ -114,6 +114,8 @@ skip marker in the PR title (CI passes the title as `COOGRAPH_PR_TITLE`), or set
 `/coograph-init` offers both:
 
 - `coograph-layout.yml` goes to `.github/workflows/`. It runs `--budget` and
-  `--guard` on every pull request. Sync refreshes it only while it exists there.
+  `--guard` on every pull request, and again when the PR title is edited (so
+  adding the skip marker takes effect). Sync refreshes it only while its first
+  line carries `coograph:managed`; delete that line to keep your own edits.
 - `pre-commit` goes to `.git/hooks/` and runs `--budget`. Bypass once with
   `git commit --no-verify`.

@@ -13,13 +13,13 @@ The full procedure lives in `.github/skills/coograph-docs-restructure/SKILL.md`.
 1. **Take stock** with `python3 .github/layout/layout.py --budget` and `--json`.
 2. **Work out the shape**: workspaces, tools in use, product areas, duplicated rules, buried gotchas.
 3. **Write** `openspec/changes/<date>-docs-restructure/` with the area fact lists, and **stop for approval**.
-4. **Apply** after approval: one subagent per area, every kept fact checked against the code (code-graph first), every dropped fact listed with a reason.
+4. **Apply** after approval: one subagent per area, every fact checked against the code (code-graph first) and marked kept, kept-unverifiable or dropped with a reason.
 5. **Verify**: `layout.py --budget` exits 0, before and after per tier, then `/coograph-review`.
 
 ## Guardrails
 
 - Never edit an instruction file before the OpenSpec is approved.
-- Never keep a fact the code does not confirm; never drop one without a reason.
+- Check every fact against the code. Keep what the code cannot confirm or contradict (marked); drop only what it contradicts, history, or duplicates, with the reason.
 - Never write dated sections. Never state a rule in more than one file.
 
 $ARGUMENTS

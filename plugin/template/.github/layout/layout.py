@@ -164,7 +164,8 @@ def merge_seed(target: Path, seed_path: Path) -> list[str]:
                 if sub not in current[key]:
                     current[key][sub] = sub_value
                     added.append(f"{key}.{sub}")
-    target.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
+    if added:  # the file is the project's: rewrite it only to add a key
+        target.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
     return added
 
 
@@ -173,13 +174,47 @@ def merge_seed(target: Path, seed_path: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def glob_regex(pattern: str) -> re.Pattern:
-    """`**` crosses directories, `*` and `?` do not. Anchored at the repo root."""
+    """`**` crosses directories, `*` and `?` do not, `{a,b}` is either.
+    Anchored at the repo root."""
     pattern = pattern.strip().replace("\\", "/")
     while pattern.startswith("./"):
         pattern = pattern[2:]
+    return re.compile("^" + _glob_body(pattern) + "$")
+
+
+def _split_top(text: str, sep: str = ",") -> list[str]:
+    """Split on `sep` outside `{...}`, so `*.{ts,tsx}` stays one item."""
+    parts, depth, cur = [], 0, []
+    for ch in text:
+        if ch == "{":
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+        if ch == sep and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+            continue
+        cur.append(ch)
+    parts.append("".join(cur))
+    return parts
+
+
+def _glob_body(pattern: str) -> str:
     out = []
     i = 0
     while i < len(pattern):
+        if pattern[i] == "{":
+            depth, j = 0, i
+            while j < len(pattern):
+                depth += {"{": 1, "}": -1}.get(pattern[j], 0)
+                if depth == 0:
+                    break
+                j += 1
+            if j < len(pattern):  # balanced: expand; unbalanced: literal
+                alts = _split_top(pattern[i + 1:j])
+                out.append("(?:" + "|".join(_glob_body(a) for a in alts) + ")")
+                i = j + 1
+                continue
         if pattern.startswith("**/", i):
             out.append("(?:.*/)?")
             i += 3
@@ -195,7 +230,7 @@ def glob_regex(pattern: str) -> re.Pattern:
         else:
             out.append(re.escape(pattern[i]))
             i += 1
-    return re.compile("^" + "".join(out) + "$")
+    return "".join(out)
 
 
 def path_matches(pattern: str, rel: str) -> bool:
@@ -354,6 +389,23 @@ def imports_of(text: str) -> list[str]:
     return found
 
 
+IMPORT_SUFFIXES = {".md", ".mdx", ".mdc", ".txt", ".json", ".yaml", ".yml", ".toml"}
+
+
+def _looks_like_import(target: str) -> bool:
+    """A missing target is reported only when it is clearly a file path, so
+    prose like `@tanstack/react-query` or `@angular/core` is not an error."""
+    if target.startswith(("./", "../", "/")):
+        return True
+    return Path(target).suffix.lower() in IMPORT_SUFFIXES
+
+
+def tier_files(cwd: Path, patterns: list[str], files: list[str]) -> list[str]:
+    """Tracked files plus what is on disk: instruction files are often kept out
+    of git on purpose (a global excludesfile), and they still load."""
+    return sorted(set(discover(patterns, files)) | set(find_files(cwd, patterns)))
+
+
 def resolve_always_loaded(cwd: Path, roots: list[str]) -> tuple[list[dict], list[dict]]:
     """Breadth-first over @ imports, each file once, at most MAX_IMPORT_HOPS deep.
 
@@ -388,7 +440,7 @@ def resolve_always_loaded(cwd: Path, roots: list[str]) -> tuple[list[dict], list
                 continue
             if candidate.is_file():
                 queue.append((child, hops + 1, rel))
-            elif "." in Path(target).name or "/" in target:
+            elif _looks_like_import(target):
                 missing.append({"file": rel, "import": target})
     return list(seen.values()), missing
 
@@ -401,7 +453,7 @@ def _split_list(value: str) -> list[str]:
     value = value.strip()
     if value.startswith("[") and value.endswith("]"):
         value = value[1:-1]
-    items = [v.strip().strip("`").strip().strip("'\"").strip() for v in value.split(",")]
+    items = [v.strip().strip("`").strip().strip("'\"").strip() for v in _split_top(value)]
     return [v for v in items if v]
 
 
@@ -477,7 +529,7 @@ def parse_gotchas(text: str, file: str = "") -> list[dict]:
 def load_gotchas(cwd: Path, config: dict, files: list[str] | None = None) -> list[dict]:
     files = list_files(cwd) if files is None else files
     out: list[dict] = []
-    for rel in discover(config["gotchas"], files):
+    for rel in tier_files(cwd, config["gotchas"], files):
         out.extend(parse_gotchas(_read(cwd / rel), rel))
     return out
 
@@ -541,7 +593,7 @@ def measure(cwd: Path, config: dict, source: str = "") -> dict:
 
     def tier(patterns: list[str], budget: int, name: str) -> list[dict]:
         rows = []
-        for rel in discover(patterns, files):
+        for rel in tier_files(cwd, patterns, files):
             if rel in always_set:
                 continue
             t = tokens_of(cwd / rel)
@@ -559,7 +611,7 @@ def measure(cwd: Path, config: dict, source: str = "") -> dict:
     over += [r for r in routers + docs + gotcha_files if r["over"]]
 
     gotchas = []
-    for rel in discover(config["gotchas"], files):
+    for rel in tier_files(cwd, config["gotchas"], files):
         gotchas.extend(parse_gotchas(_read(cwd / rel), rel))
     # A duplicate id is invalid too: the hook marks entries shown per id, so
     # the second of two `## a-b` / `## A B` entries would never surface.
@@ -652,11 +704,11 @@ def changed_files(cwd: Path, base: str, head: str) -> list[str]:
 def guard(cwd: Path, config: dict, changed: list[str]) -> dict:
     files = list_files(cwd)
     always, _ = resolve_always_loaded(cwd, config["always_loaded"])
-    doc_files = discover(config["docs"], files)
-    gotcha_files = discover(config["gotchas"], files)
+    doc_files = tier_files(cwd, config["docs"], files)
+    gotcha_files = tier_files(cwd, config["gotchas"], files)
     instruction = (
         {f["file"] for f in always} | set(doc_files) | set(gotcha_files)
-        | set(discover(config["routers"], files))
+        | set(tier_files(cwd, config["routers"], files))
     )
     # Only feature docs cover code. A gotcha describes a trap, not the current
     # state of an area, so most code changes leave it true; counting it would
