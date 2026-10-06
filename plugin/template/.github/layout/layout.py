@@ -42,8 +42,8 @@ CONFIG_REL = Path(".github") / "layout" / "layout.json"
 # layout.seed.json; a test pins that.
 DEFAULTS: dict = {
     "version": 1,
-    "always_loaded": ["CLAUDE.md", "AGENTS.md", ".github/copilot-instructions.md"],
-    "routers": ["*/AGENTS.md", "*/*/AGENTS.md"],
+    "always_loaded": ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md", ".github/copilot-instructions.md"],
+    "routers": ["*/AGENTS.md", "*/*/AGENTS.md", "*/CLAUDE.md", "*/*/CLAUDE.md"],
     "docs": ["docs/features/*.md"],
     "gotchas": ["GOTCHAS.md", "*/GOTCHAS.md", "*/*/GOTCHAS.md"],
     "budgets": {"always_loaded": 9000, "router": 2000, "doc": 8000, "gotchas": 8000},
@@ -256,6 +256,36 @@ def path_matches(pattern: str, rel: str) -> bool:
     return False
 
 
+def _linked_worktree(directory: Path) -> bool:
+    """A linked git worktree: `.git` is a file whose gitdir points into another
+    repo's `worktrees/`. Its instruction files duplicate the main checkout's, so
+    walks skip it. A real nested repo (a `.git` directory, or a submodule's
+    `.git` file) is walked as usual."""
+    marker = directory / ".git"
+    try:
+        if not marker.is_file():
+            return False
+        text = marker.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return False
+    if not text.startswith("gitdir:"):
+        return False
+    gitdir = Path(text[len("gitdir:"):].strip())
+    if not gitdir.is_absolute():
+        gitdir = directory / gitdir
+    # Only a linked worktree's gitdir holds `commondir` (pointing back at the
+    # main repo). A submodule's gitdir does not, even one that lives under a
+    # worktree's `.git/worktrees/<name>/modules/`.
+    try:
+        return (gitdir / "commondir").is_file()
+    except OSError:
+        return False
+
+
+def _walk_dirs(root: str, dirs: list[str], skip: set[str]) -> list[str]:
+    return [d for d in dirs if d not in skip and not _linked_worktree(Path(root) / d)]
+
+
 def list_files(cwd: Path) -> list[str]:
     """Files git would commit (tracked + untracked-not-ignored); a walk without git."""
     try:
@@ -270,7 +300,7 @@ def list_files(cwd: Path) -> list[str]:
         pass
     found: list[str] = []
     for root, dirs, names in os.walk(cwd):
-        dirs[:] = [d for d in dirs if d not in WALK_SKIP]
+        dirs[:] = _walk_dirs(root, dirs, WALK_SKIP)
         for name in names:
             found.append((Path(root) / name).relative_to(cwd).as_posix())
     return sorted(found)
@@ -312,7 +342,7 @@ def find_files(cwd: Path, patterns: list[str], skip: set[str] | None = None) -> 
         regex = glob_regex(pattern)
         if "**" in pattern:
             for root, dirs, names in os.walk(cwd):
-                dirs[:] = [d for d in dirs if d not in skip]
+                dirs[:] = _walk_dirs(root, dirs, skip)
                 for name in names:
                     rel = (Path(root) / name).relative_to(cwd).as_posix()
                     if regex.match(rel):
@@ -335,7 +365,7 @@ def find_files(cwd: Path, patterns: list[str], skip: set[str] | None = None) -> 
                     rel = f"{prefix}/{e.name}" if prefix else e.name
                     if last and e.is_file():
                         found.add(rel)
-                    elif not last and e.is_dir():
+                    elif not last and e.is_dir() and not _linked_worktree(Path(e.path)):
                         nxt.append(rel)
             level = nxt
     return sorted(found)

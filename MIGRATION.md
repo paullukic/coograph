@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-10-07: Layout follow-ups from the first real runs (plugin 1.8.5)
+
+- **The CI docs check runs where tooling is kept out of git.** `coograph-layout.yml` downloads `layout.py` from coograph `main` when the checkout has none. A managed workflow (first line `coograph:managed`) gets this on the next sync.
+- **Nested `CLAUDE.md` files are measured as routers.** The seed `routers` now include `*/CLAUDE.md` and `*/*/CLAUDE.md`. Your `layout.json` is yours and is not changed: add those two globs to `routers` by hand.
+- **Linked git worktrees are skipped.** Folders like `Panel-wt-*` (a `.git` file pointing into another repo's `worktrees/`) are no longer measured as workspaces.
+- **Do not commit the generated `opencode.json`.** It holds absolute, machine-specific paths on purpose: OpenCode resolves `cwd: "."` against the folder it was started in, so project-relative paths break when you start it from a subfolder (verified with OpenCode 1.18.34). Sync writes it per machine, only when missing.
+
+---
+
 ## 2026-10-06: OpenCode channel + Application-Control-safe code-graph launcher (plugin 1.8.4)
 
 Two changes, both automatic for **registered** projects on the next `git pull` of coograph:
