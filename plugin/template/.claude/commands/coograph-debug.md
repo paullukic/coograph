@@ -55,7 +55,10 @@ After 3 failed hypotheses, **STOP**. Report what was tried and ask for direction
 **Fix**: [Minimal code change applied]
 **Verification**: [How it was proven fixed]
 **Similar Issues**: [Other places this pattern might exist]
+**Gotcha candidate**: [none, or a GOTCHAS.md entry when the root cause was a trap the code does not show]
 ```
+
+**Gotcha candidate.** When the root cause was environmental or non-obvious (a tool that ignores the shell environment, a deploy setting, an error message that points the wrong way), draft a `GOTCHAS.md` entry in the format in `.github/layout/README.md`: `Symptom` with the exact error text, `Cause`, `Fix / rule`, `paths:` globs for where it bites, `commands:` if a command triggers it, `confirmed:` today. Show it and ask before writing it to `GOTCHAS.md`. A bug that was just a bug gets `none`.
 
 ### Build Error:
 ```

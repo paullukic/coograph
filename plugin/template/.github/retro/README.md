@@ -34,7 +34,7 @@ Each line is one JSON record:
 | `ts` | when it was written |
 | `tool` | `claude-code`, `codex`, `opencode`, `unknown` |
 | `session_id` | Claude Code session id, filename-safe |
-| `kind` | `session` (one per session), `violation` (rule-bound, the only kind thresholds count), `event` (not rule-bound), `decision` (a hook's action on one tool call: `warned`, `blocked` or `suppressed`, with its `tool_use_id`), `outcome` (what the transcript shows followed a decision, derived at capture and joined by `tool_use_id`) |
+| `kind` | `session` (one per session), `violation` (rule-bound, the only kind thresholds count), `event` (not rule-bound), `decision` (a hook's action on one tool call: `warned`, `blocked`, `suppressed`, or `surfaced` for the gotcha hook, with its `tool_use_id`), `outcome` (what the transcript shows followed a decision, derived at capture and joined by `tool_use_id`) |
 | `rule` | rule id from `rules.json`, or `none` |
 | `detector` | which detector wrote it |
 | `confidence` | `deterministic` or `heuristic` |
@@ -64,7 +64,7 @@ signals file.
 | `user-correction` | none | heuristic | a user message matched one of `correction_patterns` right after a tool call. Pattern id only. |
 | `new-dependency` | `no-new-deps` | deterministic | `npm install <pkg>`, `pip install <pkg>`, `uv add`, `cargo add`, `go get`, and friends; or an edit to a dependency manifest (`package.json`, `requirements.txt`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `composer.json`, `Gemfile`). Installing what a manifest already lists does not count: `pip install -r requirements.txt`, `pip install -e .`, bare `npm install`. |
 | `session` | none | deterministic | always: message count, tools used, edited-file count, skills invoked, whether the graph existed, start and end, token usage (`input`, `output`, `cache_read`, `cache_create`) summed per session, and the transcript size (`source_bytes`, used to skip unchanged transcripts without opening them) |
-| `decision` | the hook's rule | deterministic | a rule hook warned, blocked, or suppressed a repeat warning (hook-emitted through `emit_decision`; never counted as a violation) |
+| `decision` | the hook's rule | deterministic | a rule hook warned, blocked, or suppressed a repeat warning (hook-emitted through `emit_decision`; never counted as a violation). `gotcha-surface.py` writes `surfaced` with rule `gotchas` and the entry id in `gotcha`; `gotchas` is not a registry rule, so these never reach the Rules table and feed only the report's Gotchas section |
 | `outcome` | the decision's rule | deterministic | at capture, for each decision whose `tool_use_id` is in the transcript: `proceeded` (a tool result exists and the action was not `blocked`), `corrected` (the next user message matched a correction pattern), `reconciled` (rule-specific: `scope` a later `tasks.md` edit under `openspec/changes/`, `openspec-gate` a later touch of `openspec/changes`, `defect` a later review or verify skill, `generated-files` the path left alone afterwards; null for every other rule), `repeated` (later decisions for the same rule in the session) |
 
 Known false positives, by design:
@@ -103,7 +103,7 @@ prefix `11111111-aaaa-4bbb-8ccc-`), and `last_retro`.
 | `deterministic_events` / `deterministic_sessions` | 3 / 2 | a deterministic rule is "over threshold" at this many events across this many sessions |
 | `heuristic_events` / `heuristic_sessions` | 5 / 3 | a heuristic rule becomes "supporting only" evidence |
 | `prune_sessions` | 10 | a non-hard prose rule with zero events across this many sessions is a prune candidate |
-| `instruction_token_budget` | 8000 | above this, every added rule must be paired with a prune |
+| `instruction_token_budget` | 8000 | fallback only, used when `.github/layout/` is absent: above this, every added rule must be paired with a prune. With the layout checker installed the budget is `budgets.always_loaded` in `.github/layout/layout.json` (default 9000), measured over the always-loaded tier with `@` imports resolved. The two numbers measure different file sets and are not comparable |
 | `retro_prompt_min_sessions` | 3 | sessions since the last retro before the workflow offers to run one |
 | `bootstrap_min_archives` | 10 | archived changes needed to bootstrap Retro in a project that never enabled it |
 | `escalate_ignored_rate` | 0.5 | a `hook-warn` rule over threshold reads `escalate_to: hook-block` only when this share of its outcomes were ignored (the rule fired again later, nothing reconciled it), over at least `deterministic_events` outcomes; otherwise the report says `hold: no_outcomes` or `hold: warnings_change_behaviour` |
@@ -155,7 +155,12 @@ table (per rule: warned, blocked, suppressed, outcomes, and the proceeded,
 corrected, reconciled and ignored rates), path clusters, build retries,
 tokens per session (with a before / after split around the most recent rule
 change), workflow adherence (editing sessions that also ran a review or
-verify skill), instruction file sizes against the budget, and archive
+verify skill), instruction file sizes against the budget, the instruction
+layout (per-tier tokens, files over budget, dated headings, paragraphs
+repeated across root files, table padding, a structural verdict; see
+`.github/layout/README.md`), gotcha activity (how often each `GOTCHAS.md`
+entry was surfaced, and in how many of those sessions a build retry ran a
+command the entry names; stale and invalid entries), and archive
 statistics. Sessions matching `ignore_session_prefixes` are left out of all
 of it and counted once as "Ignored sessions".
 

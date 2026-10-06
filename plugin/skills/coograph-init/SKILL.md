@@ -28,7 +28,7 @@ Ask the user these questions one at a time (wait for each answer before proceedi
 
 1. **Target project path** — "What is the full path to the project you want to initialize?" (If provided as argument, use that.)
 2. **Which AI tools should I set up for?** (multi-select — accept any combination)
-   - **Claude Code** — `CLAUDE.md`, `.claude/commands/`, `.claude/hooks/`, `.claude/settings.json`
+   - **Claude Code**: `CLAUDE.md` + `AGENTS.md`, `.claude/commands/`, `.claude/hooks/`, `.claude/settings.json`
    - **VS Code Copilot** — `.github/agents/`, `.github/skills/`, `AGENTS.md`
    - **Codex CLI** — `.agents/skills/coograph-init/SKILL.md` + `AGENTS.md` (Codex scans `.agents/skills/` from repo root for native slash)
    - **OpenCode** (sst/opencode) — `.opencode/commands/coograph-init.md` + `AGENTS.md` (native `/coograph-init` slash)
@@ -52,6 +52,9 @@ Ask the user these questions one at a time (wait for each answer before proceedi
    - Options: `yes` (recommended), `no`
    - Explain in two lines: "Retro records when the agent breaks a project rule (grep before the code graph, edits outside the approved change, hand-edits to generated files, new dependencies) and what each session costs in tokens, then proposes fixes to the instruction files and hooks as an OpenSpec you approve. It stores tool names, counts, and paths only; no prompt text, code, or output, and nothing leaves the machine."
    - Capture needs Claude Code (transcripts and lifecycle hooks). Other tools get the analyzer and the `/coograph-retro` skill, but no capture. Say this if Claude Code was not selected in question 2.
+8. **Add the instruction layout checks?**
+   - Options: `CI + pre-commit` (recommended), `CI only`, `pre-commit only`, `no`
+   - Explain in two lines: "Instruction files are budgeted per tier (always-loaded root files, workspace routers, feature docs). The CI job fails a PR that puts a tier over budget, or that changes code a feature doc covers without updating the doc; the pre-commit hook runs the budget check only." The checker itself (`.github/layout/`) is always installed; this only decides whether anything runs it automatically.
 
 ## Step 1b: Detect Install State (idempotent re-init)
 
@@ -91,8 +94,9 @@ template" signal — reuse the same invariant Steps 4, 5 and the Guardrails key 
 **Template-managed files are exempt from the B and C restrictions.** Files that
 users never customize and that `sync.py` overwrites on every pull are copied
 whenever they are missing, in every state: `.github/skills/`, `.github/agents/`,
-`.claude/commands/coograph-*.md`, `.claude/hooks/`, `.claude/settings.json`, and
-`.github/retro/` (without `rules.json`). This is how a project initialized before a
+`.claude/commands/coograph-*.md`, `.claude/hooks/`, `.claude/settings.json`,
+`.github/retro/` (without `rules.json`), and `.github/layout/` (without
+`layout.json`). This is how a project initialized before a
 template feature existed (for example Retro) receives it on re-init. Step 10 then
 runs when the user enabled Retro in question 7 and `.github/retro/rules.json` is
 absent.
@@ -145,12 +149,15 @@ Copy files from the template root (see Template source) to the target project. O
 - `.github/instructions/` (all instruction `.md` files — testing, styling, brutal-honesty)
 - `.github/skills/` (all skill directories — every supported tool delegates here, including the Claude Code command wrappers in `.claude/commands/` and the multi-tool slash registrations under `templates/`)
 - `openspec/config.yaml` (create `openspec/` dir if needed)
+- `.github/layout/` (`layout.py`, `layout.seed.json`, `README.md`, `coograph-layout.yml`, `pre-commit`; never `tests/`, never `layout.json`). Then create the project's config: `cd <target> && python3 .github/layout/layout.py --merge-seed` (creates `layout.json` from the seed, or adds new keys to an existing one without touching its values). Never copy `layout.json` from the template root; it is the coograph repo's own. For a monorepo (workspaces in `package.json`, `pnpm-workspace.yaml`, `go.work`, `Cargo.toml`), set `routers` in the new `layout.json` to one `<workspace>/AGENTS.md` per workspace; for a single package set it to `[]`.
+- `GOTCHAS.md` (format header, no entries), only when the target has none. Never overwrite an existing `GOTCHAS.md`: it is project knowledge.
 - `.github/retro/` (`retro.py`, `_coograph_signals.py`, `rules.seed.json`, `README.md`; never `tests/`, never `rules.json`). Always, whatever the answer to Step 1 question 7: the analyzer and the `/coograph-retro` skill must be able to bootstrap later. Only when question 7 is `yes`, also create the live registry: `cd <target> && python3 .github/retro/retro.py --merge-seed` (creates `rules.json` from `rules.seed.json`, or adds new seeded rules to an existing one without touching local edits). Never copy `rules.json` from the template root; it is the coograph repo's own live registry.
 
 **For Claude Code:**
 - `CLAUDE.md`
+- `AGENTS.md` (`CLAUDE.md` imports it with `@AGENTS.md`: the hard rules, workflow and routing live there. Without it Claude Code skips the import silently and every hard rule is gone. Same file as VS Code Copilot, Codex CLI and OpenCode: copy once)
 - `.claude/commands/coograph-*.md` (every Coograph slash command: `/coograph-init` itself, so the project can re-init others, plus `/coograph-new-ticket`, `/coograph-plan`, `/coograph-review`, `/coograph-ultra-review`, `/coograph-verify`, `/coograph-debug`, `/coograph-search`, `/coograph-retro`, which the copied `CLAUDE.md` references)
-- `.claude/hooks/` (all hook scripts: block-generated, log-bash, report-graph, warn-scope, capture-signals, plus the shared `_coograph_guard.py` module and the `_coograph_signals.py` shim that loads `.github/retro/_coograph_signals.py`)
+- `.claude/hooks/` (all hook scripts: block-generated, log-bash, report-graph, warn-scope, capture-signals, the rule warn hooks, gotcha-surface, plus the shared `_coograph_guard.py` module and the `_coograph_signals.py` shim that loads `.github/retro/_coograph_signals.py`)
 - `.claude/settings.json` (wires the hooks into Claude Code lifecycle events)
 - Do NOT copy `.claude/settings.local.json` — that's per-machine personal overrides
 
@@ -186,7 +193,7 @@ Copy files from the template root (see Template source) to the target project. O
 - `templates/cline/.clinerules` → target project root `.clinerules`
 - Cline has no native slash registration; the rule fires when the user types `/coograph-init` (skills directory already supplied by the always-copy block).
 
-**Multi-tool selections:** copy the union of all selected tool sections plus the always-copy section. Skip duplicate destinations (e.g. `AGENTS.md` is shared between VS Code Copilot, Codex CLI, and OpenCode — copy once). `.github/skills/` is in the always-copy block; do not re-copy it from per-tool selections.
+**Multi-tool selections:** copy the union of all selected tool sections plus the always-copy section. Skip duplicate destinations (e.g. `AGENTS.md` is shared between Claude Code, VS Code Copilot, Codex CLI, and OpenCode: copy once). `.github/skills/` is in the always-copy block; do not re-copy it from per-tool selections.
 
 **Apply the Step 1b state before any copy** — decide per file, not with one
 project-wide prompt:
@@ -232,8 +239,8 @@ Using the detected info from Step 2, replace all `_TBD_` placeholders and `<!-- 
 
 **In `.github/copilot-instructions.md`:**
 - Stack table — fill with detected technologies
-- Commands table — fill with detected scripts/commands
 - Project Structure table — fill with detected paths and purposes
+- Branching Strategy: ask if not detectable from the git history
 - Code Style sections — fill based on language/framework conventions
 - Naming Conventions — fill based on language idioms
 - Data Layer, Testing, API Design, i18n, Errors and Logging — fill or delete as appropriate
@@ -242,13 +249,12 @@ Using the detected info from Step 2, replace all `_TBD_` placeholders and `<!-- 
 - Add user-provided project-specific rules under `## Project-Specific Rules` (create concise bullet points; do not duplicate existing global rules)
 
 **In `CLAUDE.md`:**
-- Quick Reference commands table
-- Key Paths based on detected structure
-- Keep workflow, critical rules, and delegation sections as-is (universal)
+- Nothing to fill. It imports `AGENTS.md` and `.github/copilot-instructions.md` with `@` and adds Claude-only sections. Keep the two import lines at the top.
 
 **In `AGENTS.md`:**
-- Stack one-liner
-- Structure summary
+- Commands table: fill with detected scripts/commands
+- Routing table: one row per area you detected (`Touching <glob>` → the doc or instruction file to read first); keep the testing and styling rows; fill the generated API types row or delete it
+- Keep the hard rules, pre-flight, tool preferences, workflow and agents sections as-is (universal). Each rule is stated once across the three files; do not copy rules between them.
 
 ## Step 5: Verify
 
@@ -613,6 +619,14 @@ cd <target> && python3 .github/retro/retro.py --report
 
 Show the user the first paragraph it prints (the plain-language opener) and the path to `report.md`. If nothing was captured, the opener says so; that is fine. Tell the user: "From now on every Claude Code session start prints a `[retro]` line, and `/coograph-retro` turns the report into proposals when there is enough evidence."
 
+## Step 11: Layout checks (only if enabled)
+
+Run this step only if Step 1 question 8 is not `no`.
+
+1. **Budget now.** `cd <target> && python3 .github/layout/layout.py --budget`. Report the per-tier lines. If it prints `STRUCTURAL` (an existing project with large maps), say so and point to `/coograph-docs-restructure`; do not try to fix it here.
+2. **CI** (`CI + pre-commit` or `CI only`): copy `.github/layout/coograph-layout.yml` to `<target>/.github/workflows/coograph-layout.yml`. Do not overwrite an existing file of that name without asking. `sync.py` refreshes it later only because it exists.
+3. **Pre-commit** (`CI + pre-commit` or `pre-commit only`): find the git dir (`git -C <target> rev-parse --git-dir`). If `<git-dir>/hooks/pre-commit` does not exist, copy `.github/layout/pre-commit` there and `chmod +x` it. If one exists, do not replace it: add the line `"$(git rev-parse --show-toplevel)/.github/layout/pre-commit" || exit 1` once, at the end, or just before the last line when that line starts with `exec` (nothing after an `exec` runs), and tell the user. Local only, like the code-graph hooks: each developer installs it once.
+
 ## Guardrails
 
 - Never guess at commands — if you can't detect them, ask.
@@ -623,3 +637,4 @@ Show the user the first paragraph it prints (the plain-language opener) and the 
 - Initialization is complete only when there are zero `_TBD_` and `<!-- FILL` markers in copied instruction files.
 - If code-graph setup is enabled, initialization is complete only when `.code-graph/graph.db` exists in the target project, at least one MCP config file has been written, AND Step 9 health check has run (either reporting healthy or finishing the user-chosen fix path).
 - If Retro is enabled, initialization is complete only when `retro.py --validate` passed and Step 10c printed a report opener.
+- Initialization is complete only when `.github/layout/layout.json` exists and `layout.py --budget` ran (its result reported, pass or fail).

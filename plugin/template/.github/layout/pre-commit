@@ -1,0 +1,10 @@
+#!/bin/sh
+# Coograph instruction budget check. Installed into .git/hooks/ by /coograph-init
+# when you opt in. Fails the commit when an instruction tier is over budget;
+# bypass once with `git commit --no-verify`. The docs guard needs a base ref,
+# so it runs in CI only (.github/workflows/coograph-layout.yml).
+ROOT=$(git rev-parse --show-toplevel) || exit 0
+SCRIPT="$ROOT/.github/layout/layout.py"
+[ -f "$SCRIPT" ] || exit 0
+if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+exec "$PY" "$SCRIPT" --cwd "$ROOT" --budget
