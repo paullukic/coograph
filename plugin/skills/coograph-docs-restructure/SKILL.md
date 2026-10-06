@@ -27,6 +27,7 @@ checked against the code; every fact you drop is listed with a reason.
 
 Look for a non-archived `openspec/changes/*-docs-restructure/`.
 
+- **Found, no `proposal.md` yet:** an aborted Phase 1. Reuse that directory and its date, keeping its `notes/layout-before.json` (taken before any edit), and continue at Step 2. Never create a second directory with a new date.
 - **Found, not yet approved:** show it and ask whether to continue with it or discard it. Never start a second one alongside it.
 - **Found and approved:** this is a resume. Go to Phase 2 and continue at the first unticked task in its `tasks.md`. Do not re-run Phase 1. Do not rewrite anything under its `notes/` (including `notes/layout-before.json`): it holds the only record of the original facts and the before numbers.
 - **An area name was given** (`/coograph-docs-restructure auth`): it applies only to an approved restructure. Run just that area's task. If no approved restructure exists, say so and stop.
