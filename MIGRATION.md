@@ -4,6 +4,12 @@
 
 ---
 
+## 2026-10-06: File-neutral OpenSpec-gate warning (plugin 1.8.3)
+
+`openspec-gate-warn.py` said "CLAUDE.md OPENSPEC OR STOP". Since the tiered template the rule lives in `AGENTS.md`, so a restructured project reworded it locally, and sync then kept the hook as a local edit, cut off from upstream fixes. The message now reads "Hard rule OPENSPEC OR STOP". Nothing to do: a project whose copy matches any earlier upstream version is updated on the next sync. A project that reworded it locally can take `.coograph/upstream/.claude/hooks/openspec-gate-warn.py`.
+
+---
+
 ## 2026-10-06: Sync keeps local edits (plugin 1.8.2)
 
 **Fixed: sync no longer overwrites a project's edits to template-managed files.** Until now every sync copied `.github/skills/`, `.github/retro/`, `.github/layout/`, `.github/code-graph/`, `.claude/hooks/`, `.claude/commands/coograph-*.md`, `.claude/settings.json` and the managed layout workflow over the project's copies, so a retro hook upgrade, a local fix or a house-style pass was reverted in the working tree on the next `git pull` of coograph, with only "N files updated" in the log.

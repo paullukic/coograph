@@ -1020,7 +1020,10 @@ class OpenspecGateHookTests(unittest.TestCase):
         self.assertEqual(self._marker(root, "edited", "g1").read_text().split(), ["src/a.ts"])
 
         second = self._gate(root, "g1", "Edit", "g1b", file_path=str(root / "src" / "b.ts"))
-        _warned(self, second, "[openspec-gate] second source file this session (src/b.ts)")
+        ctx = _warned(self, second, "[openspec-gate] second source file this session (src/b.ts)")
+        # The rule is named, not a file: it lives in AGENTS.md or CLAUDE.md by layout.
+        self.assertIn("Hard rule OPENSPEC OR STOP:", ctx)
+        self.assertNotIn("CLAUDE.md OPENSPEC", ctx)
         self.assertTrue(self._marker(root, "warned", "g1").exists())
 
         third = self._gate(root, "g1", "Edit", "g1c", file_path=str(root / "src" / "c.ts"))
