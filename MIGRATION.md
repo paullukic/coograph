@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-10-23: Python calls through modules and objects (plugin 1.8.6)
+
+- **`callers_of`, `get_impact_radius` and `get_review_context` now see `module.func()` and `obj.method()` calls in Python.** Before, only `foo()` and `self.foo()` became `calls` edges. A call links when the module or class name matches (`iap_service.verify_receipt()`, `crud.user_preferences.x()` → `crud_user_preferences.py`), or when the name is unique in the project and not a common one like `get` or `commit`. Python calls never link into JS/TS files. On a multi-repo workspace, the caller's own repo wins ties. Measured on one: 762 → 1,365 call edges, with 29 of 30 sampled new edges correct.
+- **Rebuild once.** The code arrives with the next sync, but `update_graph` only re-parses changed files. Run `build_graph` (or delete `.code-graph/graph.db`) once to get the new edges everywhere.
+
+---
+
 ## 2026-10-07: Layout follow-ups from the first real runs (plugin 1.8.5)
 
 - **The CI docs check runs where tooling is kept out of git.** `coograph-layout.yml` downloads `layout.py` from coograph `main` when the checkout has none. A managed workflow (first line `coograph:managed`) gets this on the next sync.

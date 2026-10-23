@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .. import nid
 from .core import Parser, ancestor, get_lang, txt, walk
-from .languages import CFG, KIND_OVERRIDE, calls_php, calls_python
+from .languages import CFG, KIND_OVERRIDE, calls_php, calls_python, python_import_aliases
 
 
 def parse_file(path: Path, rel: str, nodes: list, edges: list) -> None:
@@ -210,13 +210,14 @@ def _pass_functions(root, src, ext, rel, fid, class_types, fn_types, nodes, edge
 
 def _pass_calls(root, src, ext, rel, fid, class_types, fn_types, edges):
     if ext == ".py":
+        aliases = python_import_aliases(root, src)
         for fn_node in walk(root):
             if fn_node.type not in fn_types:
                 continue
             fn_nid = _fn_nid_for(fn_node, src, ext, rel, class_types)
             if fn_nid is None:
                 continue
-            for callee in calls_python(fn_node, src, fn_types):
+            for callee in calls_python(fn_node, src, fn_types, aliases):
                 edges.append((fn_nid, callee, "calls"))
     elif ext == ".php":
         file_refs: set[str] = set()

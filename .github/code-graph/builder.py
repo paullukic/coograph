@@ -480,12 +480,106 @@ def _link_inheritance(conn: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Method names too generic to link on name alone: on an object call
+# (`session.commit()`) they are almost always a library method.
+_COMMON_CALL_NAMES = frozenset({
+    "get", "set", "create", "filter", "add", "update", "delete", "remove",
+    "first", "all", "one", "query", "commit", "rollback", "close", "open",
+    "run", "send", "save", "load", "read", "write", "append", "extend", "pop",
+    "items", "keys", "values", "join", "split", "strip", "format", "replace",
+    "copy", "clear", "count", "index", "find", "execute", "flush", "refresh",
+    "start", "stop", "call", "apply", "parse", "dumps", "loads", "info",
+    "debug", "warning", "error", "exception", "encode", "decode", "lower",
+    "upper", "startswith", "endswith", "json", "post", "put", "patch",
+})
+
+
+_JS_FAMILY = frozenset({".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts",
+                        ".cts", ".vue", ".svelte"})
+
+
+def _norm_ident(name: str) -> str:
+    return name.replace("_", "").replace("-", "").lower()
+
+
+def _lang_family(path: str) -> str:
+    ext = Path(path).suffix.lower()
+    if ext in (".py", ".pyi"):
+        return ".py"
+    return ".js" if ext in _JS_FAMILY else ext
+
+
+def _shared_prefix(a: str, b: str) -> int:
+    """Number of leading path segments two files share."""
+    n = 0
+    for x, y in zip(a.replace("\\", "/").split("/"), b.replace("\\", "/").split("/")):
+        if x != y:
+            break
+        n += 1
+    return n
+
+
+def _closest(candidates: list[tuple[str, str]], file_of_src: str) -> str:
+    """Candidate whose file shares the longest leading path with the caller.
+
+    In a multi-repo workspace that is the caller's own repo. Ties keep the
+    first candidate, as before.
+    """
+    return max(candidates, key=lambda c: _shared_prefix(c[0], file_of_src))[1]
+
+
+def _resolve_qualified(chain: list[str], candidates: list[tuple[str, str]],
+                       file_of_src: str, class_of: dict[str, str]) -> str | None:
+    """Pick the target of `a.b.name()` among same-named candidates, or None.
+
+    Only candidates in the caller's language count. One whose file stem or
+    class matches the last object part (`iap_service`, or `user_preferences`
+    for `crud_user_preferences.py` / `CRUDUserPreferences`) wins. Ties go to
+    the one whose path also holds the earlier parts (`crud`), then to the
+    exact match, then to the shortest name, then to the closest file. With no
+    match, the only candidate
+    links unless its name is in `_COMMON_CALL_NAMES`.
+    """
+    name = chain[-1]
+    qualifier = chain[-2]
+    family = _lang_family(file_of_src)
+    candidates = [c for c in candidates if _lang_family(c[0]) == family]
+    if not candidates:
+        return None
+
+    q = _norm_ident(qualifier)
+    hints = {_norm_ident(p) for p in chain[:-2] if len(p) >= 3} - {"self", "cls"}
+    scored = []
+    for file, node_id in candidates:
+        stem = Path(file).stem
+        sn, cn = _norm_ident(stem), _norm_ident(class_of.get(node_id, ""))
+        if stem == qualifier or (cn and cn == q):
+            match, extra = 2, 0
+        elif len(q) >= 3 and (sn.endswith(q) or sn.startswith(q)):
+            match, extra = 1, len(sn) - len(q)
+        elif len(q) >= 3 and cn and (cn.endswith(q) or cn.startswith(q)):
+            match, extra = 1, len(cn) - len(q)
+        else:
+            continue
+        segments = {_norm_ident(s) for s in file.replace("\\", "/").split("/")[:-1]}
+        hits = sum(1 for h in hints if h in segments or sn.startswith(h))
+        # `extra`: `crud_fcm.py` is a closer match for `fcm` than `crud_business_fcm.py`
+        scored.append(((hits, match, -extra, _shared_prefix(file, file_of_src)), node_id))
+    if scored:
+        return max(scored, key=lambda s: s[0])[1]
+    if len(candidates) == 1 and name not in _COMMON_CALL_NAMES:
+        return candidates[0][1]
+    return None
+
+
 def _link_calls(conn: sqlite3.Connection) -> None:
     """Resolve raw callee-name 'calls' edges to function/method node IDs.
 
     Parsers emit (fn_nid, callee_name_string, 'calls') edges.
     This step resolves the name strings to actual node IDs where possible.
-    Same-file matches are preferred; unresolvable edges are deleted.
+    A bare `name` prefers a same-file match, then the closest file. A dotted
+    `a.b.name` (Python module or object call) goes through
+    `_resolve_qualified`. Unresolvable edges are deleted.
 
     Only *unresolved* rows are considered: a row whose `dst` is already a node ID
     was resolved by an earlier run. Re-processing those would delete them, because
@@ -508,6 +602,15 @@ def _link_calls(conn: sqlite3.Connection) -> None:
         )
     }
 
+    # Method -> name of the class that contains it (for qualified calls)
+    class_of: dict[str, str] = {
+        method_id: cls_name
+        for method_id, cls_name in conn.execute(
+            "SELECT e.dst, c.name FROM edges e JOIN nodes c ON c.id = e.src "
+            "WHERE e.kind='contains' AND c.kind != 'file'"
+        )
+    }
+
     inserts: list[tuple[str, str, str]] = []
     deletions: list[tuple[str, str, str]] = []
 
@@ -516,13 +619,22 @@ def _link_calls(conn: sqlite3.Connection) -> None:
         "WHERE kind='calls' AND dst NOT IN (SELECT id FROM nodes)"
     )):
         deletions.append((src_id, callee_name, 'calls'))
-        candidates = by_name.get(callee_name, [])
-        if not candidates:
-            continue
-        # Prefer same-file match, then any match
         file_of_src = src_file.get(src_id, "")
-        same = [(f, n) for f, n in candidates if f == file_of_src]
-        target_nid = (same or candidates)[0][1]
+        if "." in callee_name:
+            chain = callee_name.split(".")
+            candidates = by_name.get(chain[-1], [])
+            if not candidates or not all(chain):
+                continue
+            target_nid = _resolve_qualified(chain, candidates, file_of_src, class_of)
+            if target_nid is None:
+                continue
+        else:
+            candidates = by_name.get(callee_name, [])
+            if not candidates:
+                continue
+            # Prefer same-file match, then the closest file
+            same = [(f, n) for f, n in candidates if f == file_of_src]
+            target_nid = same[0][1] if same else _closest(candidates, file_of_src)
         if target_nid != src_id:
             inserts.append((src_id, target_nid, 'calls'))
 
