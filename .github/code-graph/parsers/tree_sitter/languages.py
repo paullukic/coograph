@@ -43,13 +43,55 @@ PHP_MAGIC = frozenset({
 # Call extractors
 # ---------------------------------------------------------------------------
 
-def calls_python(fn_node, src: bytes, fn_types: frozenset) -> set[str]:
+def _dotted_parts(node, src: bytes) -> list[str] | None:
+    """`a.b.c` -> ["a", "b", "c"]; None if any link is not a plain identifier.
+
+    A chained or computed object (`db.query(X).filter`, `x[0].y`) returns None,
+    so calls on library results never become `calls` edges.
+    """
+    if node.type == "identifier":
+        return [txt(node, src)]
+    if node.type == "attribute":
+        obj = node.child_by_field_name("object")
+        attr = node.child_by_field_name("attribute")
+        head = _dotted_parts(obj, src) if obj else None
+        if head is None or attr is None:
+            return None
+        return head + [txt(attr, src)]
+    return None
+
+
+def python_import_aliases(root, src: bytes) -> dict[str, str]:
+    """Local alias -> imported module/name, for `import a.b as z` and
+    `from a import b as c`. Lets `z.func()` qualify as `b.func`."""
+    aliases: dict[str, str] = {}
+    for node in walk(root):
+        if node.type not in ("import_statement", "import_from_statement"):
+            continue
+        for ch in node.children:
+            if ch.type != "aliased_import":
+                continue
+            name = ch.child_by_field_name("name")
+            alias = ch.child_by_field_name("alias")
+            if name and alias:
+                aliases[txt(alias, src)] = txt(name, src).rsplit(".", 1)[-1]
+    return aliases
+
+
+def calls_python(fn_node, src: bytes, fn_types: frozenset,
+                 aliases: dict[str, str] | None = None) -> set[str]:
     """Callee names invoked from inside a Python function/method body.
 
-    Resolves bare identifiers and `self.method()` calls. Skips builtins and
-    dunder names. Does not descend into nested function/class definitions.
+    Bare `foo()` and `self.foo()` / `cls.foo()` give `foo`. A call through a
+    module or object gives the dotted chain `a.b.foo`, with a one-part object
+    expanded through import aliases (`iap_service.verify_receipt()` ->
+    `iap_service.verify_receipt`, `crud.fcm.create()` -> `crud.fcm.create`).
+    `builder._link_calls` resolves both forms. Skips builtins,
+    dunder names and calls on chained objects. Does not descend into nested
+    function/class definitions.
     """
     calls: set[str] = set()
+    aliases = aliases or {}
 
     def _visit(node):
         for child in node.children:
@@ -67,10 +109,15 @@ def calls_python(fn_node, src: bytes, fn_types: frozenset) -> set[str]:
                     elif fn_child.type == "attribute":
                         obj = fn_child.child_by_field_name("object")
                         attr = fn_child.child_by_field_name("attribute")
-                        if obj and attr and txt(obj, src) == "self":
-                            name = txt(attr, src)
-                            if name and not (name.startswith("__") and name.endswith("__")):
+                        parts = _dotted_parts(obj, src) if obj else None
+                        name = txt(attr, src) if attr else ""
+                        if parts and name and not (name.startswith("__") and name.endswith("__")):
+                            if parts in (["self"], ["cls"]):
                                 calls.add(name)
+                            else:
+                                if len(parts) == 1:
+                                    parts = [aliases.get(parts[0], parts[0])]
+                                calls.add(".".join(parts + [name]))
             _visit(child)
 
     _visit(fn_node)
