@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-10-23: JS/TS imports follow the nearest tsconfig and the real default export (plugin 1.8.11)
+
+- **Each file uses its nearest `tsconfig.json` (else `jsconfig.json`)**, not only the one at the workspace root. A repo inside a multi-repo workspace now gets its own aliases.
+- **Resolution follows `tsc`:**
+  - relative `extends` is followed (SvelteKit's `$lib` lives in `./.svelte-kit/tsconfig.json`; run `svelte-kit sync` or the dev server once so that file exists);
+  - exact keys (`$lib`) and `*` keys both work, and the longest key wins;
+  - each target in a key's list is tried in turn;
+  - `baseUrl`-only imports (`components/Button`) resolve when the file exists;
+  - configs with comments and trailing commas parse.
+  
+  Package `extends`, project `references` and `package.json` `exports` maps are not read.
+- **Default imports link to what the file exports as default:** `import Foo from './x'; Foo()` reaches `export default function bar`, `export { bar as default }`, `export default bar` or `module.exports = bar`. A new `exports_default` edge (file → name) records it.
+- **Only JS/TS files read tsconfig.** A Python `import config` no longer risks landing on `config.ts` under a `baseUrl` config.
+- **`update_graph` drops stale call edges.** Re-parsing a changed file now removes the old edges out of its functions too, so a renamed default export or a removed import no longer leaves the old call behind.
+- **Measured** on four workspaces:
+  - wisehosting: JS/TS call edges 1,367 → 1,586 (all the new ones in `Panel/`), and 777 wrong file dependencies replaced by 866 correct ones (TypeScript files had "depended on" `config/http.php` and chatwoot's `.vue` files);
+  - metaspry/app: 607 → 943 file dependencies;
+  - liftorra: +104 call edges.
+  
+  20 of 20 sampled new edges were correct; 20 of 20 sampled removed edges were wrong. No call edge was lost. Rebuild once (`build_graph`).
+
+---
+
 ## 2026-10-23: JS/TS and Kotlin call edges; minified files skipped (plugin 1.8.8)
 
 - **JS/TS arrow functions are nodes.** `const f = () => {}`, `const f = function () {}` and class-field arrows now appear as functions and methods. Arrows nested inside another function stay part of it.
