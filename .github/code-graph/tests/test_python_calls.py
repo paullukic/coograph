@@ -19,6 +19,11 @@ CODE_GRAPH = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_GRAPH))
 
 import builder  # noqa: E402
+
+try:
+    import server  # noqa: E402
+except SystemExit as exc:  # pragma: no cover - missing mcp package
+    raise unittest.SkipTest(f"code-graph server not importable: {exc}") from exc
 from parsers.tree_sitter import core  # noqa: E402
 
 if not core.AVAILABLE or core.get_lang(".py") is None:  # pragma: no cover
@@ -135,6 +140,13 @@ from app import crud
 def logout(db, rid):
     return crud.fcm.delete_registration_id_user(db, rid)
 ''',
+    "repo1/app/api/endpoints/business_login.py": '''
+from app import crud
+
+
+def logout(db, rid):
+    return crud.business_fcm.delete_registration_id_user(db, rid)
+''',
     "repo1/web/throttle.js": '''
 export function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -160,9 +172,12 @@ class PythonCallTests(unittest.TestCase):
     def _build(cls) -> None:
         db = builder.build(cls.tmp)
         cls.conn = sqlite3.connect(db)
+        cls._server_paths = (server.ROOT, server.DB_PATH)
+        server.ROOT, server.DB_PATH = cls.tmp, db
 
     @classmethod
     def tearDownClass(cls) -> None:
+        server.ROOT, server.DB_PATH = cls._server_paths
         cls.conn.close()
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
@@ -217,6 +232,20 @@ class PythonCallTests(unittest.TestCase):
         self.assertEqual(
             {("delete_registration_id_user", "repo1/app/crud/crud_fcm.py")},
             self.callees("logout", "repo1/app/api/endpoints/login.py"))
+
+    def test_callers_of_covers_every_function_with_the_name(self):
+        rows = server.query_graph("callers_of", "delete_registration_id_user")
+        self.assertEqual(
+            {(r["file"], r["target_file"]) for r in rows},
+            {("repo1/app/api/endpoints/login.py", "repo1/app/crud/crud_fcm.py"),
+             ("repo1/app/api/endpoints/business_login.py", "repo1/app/crud/crud_business_fcm.py")})
+
+    def test_callees_of_covers_every_function_with_the_name(self):
+        rows = server.query_graph("callees_of", "logout")
+        self.assertEqual(
+            {(r["source_file"], r["file"]) for r in rows},
+            {("repo1/app/api/endpoints/login.py", "repo1/app/crud/crud_fcm.py"),
+             ("repo1/app/api/endpoints/business_login.py", "repo1/app/crud/crud_business_fcm.py")})
 
     def test_bare_and_self_calls_unchanged(self):
         self.assertEqual({("helper", "repo1/app/main.py")},

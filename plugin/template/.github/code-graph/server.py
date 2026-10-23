@@ -687,8 +687,10 @@ def query_graph(pattern: str, node_name: str) -> list[dict]:
     """Query the graph with a named pattern.
 
     Patterns:
-        callers_of   — nodes that call node_name (function/method)
-        callees_of   — functions/methods called by node_name
+        callers_of   — nodes that call node_name (function/method); every
+                       function with that name counts, `target_file` says which
+        callees_of   — functions/methods called by node_name; every function
+                       with that name counts, `source_file` says which
         tests_for    — test files that cover a given source file path
         imports_of   — what a given source file imports
         importers_of — files that import from the given source file
@@ -697,27 +699,27 @@ def query_graph(pattern: str, node_name: str) -> list[dict]:
     conn = _conn()
     results: list[dict] = []
 
+    # callers_of / callees_of cover every node with that name: in a multi-repo
+    # workspace the same function name often lives in several files.
     if pattern == "callers_of":
-        row = conn.execute("SELECT id FROM nodes WHERE name=?", (node_name,)).fetchone()
-        if row:
-            for name, kind, file in conn.execute(
-                "SELECT n.name, n.kind, n.file "
-                "FROM edges e JOIN nodes n ON n.id=e.src "
-                "WHERE e.dst=? AND e.kind='calls'",
-                (row[0],),
-            ):
-                results.append({"name": name, "kind": kind, "file": file})
+        for name, kind, file, target_file in conn.execute(
+            "SELECT n.name, n.kind, n.file, t.file "
+            "FROM edges e JOIN nodes n ON n.id=e.src JOIN nodes t ON t.id=e.dst "
+            "WHERE t.name=? AND e.kind='calls' ORDER BY t.file, n.file",
+            (node_name,),
+        ):
+            results.append({"name": name, "kind": kind, "file": file,
+                            "target_file": target_file})
 
     elif pattern == "callees_of":
-        row = conn.execute("SELECT id FROM nodes WHERE name=?", (node_name,)).fetchone()
-        if row:
-            for name, kind, file in conn.execute(
-                "SELECT n.name, n.kind, n.file "
-                "FROM edges e JOIN nodes n ON n.id=e.dst "
-                "WHERE e.src=? AND e.kind='calls'",
-                (row[0],),
-            ):
-                results.append({"name": name, "kind": kind, "file": file})
+        for name, kind, file, source_file in conn.execute(
+            "SELECT n.name, n.kind, n.file, s.file "
+            "FROM edges e JOIN nodes n ON n.id=e.dst JOIN nodes s ON s.id=e.src "
+            "WHERE s.name=? AND e.kind='calls' ORDER BY s.file, n.file",
+            (node_name,),
+        ):
+            results.append({"name": name, "kind": kind, "file": file,
+                            "source_file": source_file})
 
     elif pattern == "tests_for":
         row = conn.execute(

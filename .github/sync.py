@@ -123,21 +123,51 @@ def _find_uv() -> Path | None:
 UV_PINNED_ENV = {"UV_NO_MANAGED_PYTHON": "1", "UV_PYTHON_DOWNLOADS": "never"}
 
 
-def _graph_launcher(project_path: Path, server: Path, reqs: Path):
+def _venv_has_tree_sitter(venv: Path) -> bool:
+    """True when the venv's site-packages holds `tree_sitter`.
+
+    Without it the builder silently drops to the regex parsers, which find
+    far fewer `calls` edges, so such a venv must not be used as if it were fine.
+    """
+    return any(p.is_dir() for p in (
+        *venv.glob("Lib/site-packages/tree_sitter"),
+        *venv.glob("lib/python*/site-packages/tree_sitter"),
+    ))
+
+
+def _graph_launcher(project_path: Path, server: Path, reqs: Path,
+                    install_missing: bool = False):
     """Resolve (command, child env, label) for launching server.py here.
 
     Priority: project venv -> uv with pinned env (system Python only) ->
     plain python. Paths are absolute; child env is None when nothing needs
     pinning, and callers pass it straight to subprocess.run(env=...).
+
+    A venv is used only when it has tree-sitter. With `install_missing` (a
+    graph build), sync first runs the venv's pip on requirements.txt; without
+    it (writing opencode.json) nothing is installed. An unready venv is
+    skipped with a warning.
     """
+    venv = project_path / ".code-graph" / "venv"
     venv_py = next(
-        (p for p in (project_path / ".code-graph" / "venv" / "Scripts" / "python.exe",
-                     project_path / ".code-graph" / "venv" / "bin" / "python")
+        (p for p in (venv / "Scripts" / "python.exe", venv / "bin" / "python")
          if p.exists()),
         None,
     )
     if venv_py:
-        return [str(venv_py), str(server)], None, "venv (trusted stdlib)"
+        if not _venv_has_tree_sitter(venv) and install_missing and reqs.exists():
+            log.info("  .code-graph/venv has no tree-sitter: installing %s", reqs.name)
+            try:
+                subprocess.run(
+                    [str(venv_py), "-m", "pip", "install", "-q", "-r", str(reqs)],
+                    capture_output=True, text=True, timeout=600,
+                )
+            except (OSError, subprocess.SubprocessError) as e:
+                log.warning("  pip install in .code-graph/venv failed: %s", e)
+        if _venv_has_tree_sitter(venv):
+            return [str(venv_py), str(server)], None, "venv (trusted stdlib)"
+        log.warning("  %s has no tree-sitter; not using it (the graph would "
+                    "fall back to regex parsers)", venv)
     uv = _find_uv()
     if uv and reqs.exists():
         child_env = dict(os.environ)
@@ -988,7 +1018,8 @@ def _rebuild_graph(project_path: Path) -> None:
                     log.info("%s generated in %.2fs", label, elapsed)
         return
 
-    cmd_base, child_env, label = _graph_launcher(project_path, server, reqs)
+    cmd_base, child_env, label = _graph_launcher(project_path, server, reqs,
+                                                 install_missing=True)
     log.info("BUILD graph (%s)...", label)
 
     t0 = time.perf_counter()

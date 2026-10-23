@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-10-23: callers_of sees every same-named function; venv needs tree-sitter (plugin 1.8.7)
+
+- **`query_graph callers_of` / `callees_of` now cover every function with that name,** not just the first one found. Each result has a new field naming the copy: `target_file` for callers_of, `source_file` for callees_of. Before, a name that existed in several files (common in multi-repo workspaces) could return `[]` even though the graph held its callers.
+- **Sync no longer builds with a `.code-graph/venv` that has no tree-sitter.** It first installs `requirements.txt` into the venv. If tree-sitter is still missing, it warns and uses uv instead. Before, such a venv silently built with the regex parsers, which find far fewer call edges. Automatic on the next pull. If a project's call count looked low, rebuild it once afterwards.
+
+---
+
 ## 2026-10-23: Python calls through modules and objects (plugin 1.8.6)
 
 - **`callers_of`, `get_impact_radius` and `get_review_context` now see `module.func()` and `obj.method()` calls in Python.** Before, only `foo()` and `self.foo()` became `calls` edges. A call links when the module or class name matches (`iap_service.verify_receipt()`, `crud.user_preferences.x()` → `crud_user_preferences.py`), or when the name is unique in the project and not a common one like `get` or `commit`. Python calls never link into JS/TS files. On a multi-repo workspace, the caller's own repo wins ties. Measured on one: 762 → 1,365 call edges, with 29 of 30 sampled new edges correct.

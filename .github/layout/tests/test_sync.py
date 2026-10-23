@@ -346,5 +346,64 @@ class ProjectFlagTests(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class GraphLauncherVenvTests(unittest.TestCase):
+    """A .code-graph/venv without tree-sitter is never used silently."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="coograph-venv-"))
+        self.venv = self.tmp / ".code-graph" / "venv"
+        (self.venv / "Scripts").mkdir(parents=True)
+        (self.venv / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+        (self.venv / "Lib" / "site-packages").mkdir(parents=True)
+        self.server = self.tmp / "server.py"
+        self.reqs = self.tmp / "requirements.txt"
+        self.reqs.write_text("tree-sitter", encoding="utf-8")
+        self.saved = (sync.subprocess.run, sync._find_uv)
+        self.pip_calls: list[list[str]] = []
+        sync._find_uv = lambda: Path("uv")
+
+    def tearDown(self) -> None:
+        sync.subprocess.run, sync._find_uv = self.saved
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _fake_pip(self, installs: bool):
+        def run(cmd, **kwargs):
+            self.pip_calls.append(cmd)
+            if installs:
+                (self.venv / "Lib" / "site-packages" / "tree_sitter").mkdir()
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        sync.subprocess.run = run
+
+    def test_ready_venv_is_used(self) -> None:
+        (self.venv / "Lib" / "site-packages" / "tree_sitter").mkdir()
+        self._fake_pip(installs=False)
+        cmd, _, label = sync._graph_launcher(self.tmp, self.server, self.reqs, install_missing=True)
+        self.assertEqual(cmd[0], str(self.venv / "Scripts" / "python.exe"))
+        self.assertEqual(self.pip_calls, [])
+        self.assertIn("venv", label)
+
+    def test_build_installs_requirements_then_uses_venv(self) -> None:
+        self._fake_pip(installs=True)
+        with self.assertLogs("code-graph.sync", level="INFO"):
+            cmd, _, _ = sync._graph_launcher(self.tmp, self.server, self.reqs, install_missing=True)
+        self.assertEqual(cmd[0], str(self.venv / "Scripts" / "python.exe"))
+        self.assertEqual(self.pip_calls[0][1:5], ["-m", "pip", "install", "-q"])
+
+    def test_failed_install_falls_back_to_uv_with_warning(self) -> None:
+        self._fake_pip(installs=False)
+        with self.assertLogs("code-graph.sync", level="WARNING") as logs:
+            cmd, env, _ = sync._graph_launcher(self.tmp, self.server, self.reqs, install_missing=True)
+        self.assertEqual(cmd[0], "uv")
+        self.assertEqual(env["UV_NO_MANAGED_PYTHON"], "1")
+        self.assertTrue(any("no tree-sitter" in m for m in logs.output))
+
+    def test_config_path_installs_nothing_and_skips_venv(self) -> None:
+        self._fake_pip(installs=True)
+        with self.assertLogs("code-graph.sync", level="WARNING"):
+            cmd, _, _ = sync._graph_launcher(self.tmp, self.server, self.reqs)
+        self.assertEqual(self.pip_calls, [])
+        self.assertEqual(cmd[0], "uv")
+
+
 if __name__ == "__main__":
     unittest.main()
