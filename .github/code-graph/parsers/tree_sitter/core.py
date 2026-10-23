@@ -35,6 +35,8 @@ PKG_MAP: dict[str, tuple[str, str]] = {
     ".py":   ("tree_sitter_python",     "language"),
     ".js":   ("tree_sitter_javascript", "language"),
     ".jsx":  ("tree_sitter_javascript", "language"),
+    ".mjs":  ("tree_sitter_javascript", "language"),
+    ".cjs":  ("tree_sitter_javascript", "language"),
     ".ts":   ("tree_sitter_typescript", "language_typescript"),
     ".tsx":  ("tree_sitter_typescript", "language_tsx"),
     ".java": ("tree_sitter_java",       "language"),

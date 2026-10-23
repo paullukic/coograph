@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-10-23: JS/TS and Kotlin call edges; minified files skipped (plugin 1.8.8)
+
+- **JS/TS arrow functions are nodes.** `const f = () => {}`, `const f = function () {}` and class-field arrows now appear as functions and methods. Arrows nested inside another function stay part of it.
+- **JS/TS calls resolve through imports.** Named, aliased, default and namespace imports, `require`, tsconfig aliases and `index` barrels are all followed. Package imports (`react`) and platform globals (`console`, `chrome`, …) give no edges. A local `f()` or `this.f()` links within the same file only.
+- **Kotlin calls** follow the Python rules (bare, `this.`, dotted chains).
+- **Bare calls stay in their language.** A Python `select()` no longer links to a Kotlin `select`. Dotted matches now use the end of a name only (`crud_fcm` matches `fcm`; `navigationUtilities` no longer matches `navigation`). A match in the caller's own file needs an earlier chain part (`crud.x.y()`).
+- **Minified scripts are skipped:** `.js/.mjs/.cjs` files with `.min.` in the name, or averaging over 300 characters per line. The build log counts them.
+- Measured on a multi-repo workspace: JS/TS 0 → 661 call edges, Kotlin 0 → 526, 51 bundles skipped. Python went 1,365 → 1,205; every edge removed was cross-language or a library method. Rebuild once (`build_graph`).
+
+---
+
 ## 2026-10-23: callers_of sees every same-named function; venv needs tree-sitter (plugin 1.8.7)
 
 - **`query_graph callers_of` / `callees_of` now cover every function with that name,** not just the first one found. Each result has a new field naming the copy: `target_file` for callers_of, `source_file` for callees_of. Before, a name that existed in several files (common in multi-repo workspaces) could return `[]` even though the graph held its callers.

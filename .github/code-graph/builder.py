@@ -110,8 +110,37 @@ def _ext_for(path: Path) -> str:
     return path.suffix.lower()
 
 
-def _walk(root: Path, extensions: frozenset[str]) -> Generator[Path, None, None]:
-    """Walk the repo yielding source files matching the given extensions."""
+_MINIFIABLE_EXTS = frozenset({".js", ".mjs", ".cjs"})
+_MINIFIED_AVG_LINE = 300   # chars per line in the first 64 KB
+_MINIFIED_SAMPLE = 64 * 1024
+
+
+def _is_minified(path: Path) -> bool:
+    """A bundled/minified script: `.min.` in the name, or very long lines.
+
+    Committed build output (`main-es2015.<hash>.js`, Gatsby `public/`) holds
+    thousands of mangled functions that drown the real code in the graph.
+    """
+    if path.suffix.lower() not in _MINIFIABLE_EXTS:
+        return False
+    if ".min." in path.name.lower():
+        return True
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(_MINIFIED_SAMPLE)
+    except OSError:
+        return False
+    if len(head) < 2048:
+        return False
+    return len(head) / (head.count(b"\n") + 1) > _MINIFIED_AVG_LINE
+
+
+def _walk(root: Path, extensions: frozenset[str],
+          skipped: list[str] | None = None) -> Generator[Path, None, None]:
+    """Walk the repo yielding source files matching the given extensions.
+
+    Minified scripts are left out; their paths go to `skipped` when given.
+    """
     for dp, dirs, files in os.walk(root):
         dirs[:] = [
             d for d in dirs
@@ -120,6 +149,10 @@ def _walk(root: Path, extensions: frozenset[str]) -> Generator[Path, None, None]
         for f in files:
             p = Path(dp) / f
             if _ext_for(p) in extensions:
+                if _is_minified(p):
+                    if skipped is not None:
+                        skipped.append(str(p))
+                    continue
                 yield p
 
 
@@ -491,6 +524,18 @@ _COMMON_CALL_NAMES = frozenset({
     "start", "stop", "call", "apply", "parse", "dumps", "loads", "info",
     "debug", "warning", "error", "exception", "encode", "decode", "lower",
     "upper", "startswith", "endswith", "json", "post", "put", "patch",
+    # JS / Kotlin
+    "map", "forEach", "then", "catch", "finally", "push", "slice", "splice",
+    "includes", "reduce", "some", "every", "toString", "trim", "concat",
+    "sort", "resolve", "reject", "log", "warn", "has", "entries", "setState",
+    "addEventListener", "removeEventListener", "querySelector", "emit", "on",
+    "off", "subscribe", "dispatch", "next", "setValue", "getValue", "let",
+    "also", "invoke", "launch", "collect", "observe",
+    # Android SDK / React Navigation methods a project often shadows
+    "select", "getString", "getInt", "getLong", "getBoolean", "putString",
+    "putInt", "putBoolean", "edit", "show", "dismiss", "setText", "getText",
+    "setVisibility", "findViewById", "startActivity", "finish", "notify",
+    "setOnClickListener", "postValue", "setAdapter", "navigate", "goBack",
 })
 
 
@@ -534,7 +579,8 @@ def _resolve_qualified(chain: list[str], candidates: list[tuple[str, str]],
 
     Only candidates in the caller's language count. One whose file stem or
     class matches the last object part (`iap_service`, or `user_preferences`
-    for `crud_user_preferences.py` / `CRUDUserPreferences`) wins. Ties go to
+    for `crud_user_preferences.py` / `CRUDUserPreferences`) wins; a candidate
+    in the caller's own file matches only with an earlier-part hint. Ties go to
     the one whose path also holds the earlier parts (`crud`), then to the
     exact match, then to the shortest name, then to the closest file. With no
     match, the only candidate
@@ -555,14 +601,19 @@ def _resolve_qualified(chain: list[str], candidates: list[tuple[str, str]],
         sn, cn = _norm_ident(stem), _norm_ident(class_of.get(node_id, ""))
         if stem == qualifier or (cn and cn == q):
             match, extra = 2, 0
-        elif len(q) >= 3 and (sn.endswith(q) or sn.startswith(q)):
+        elif len(q) >= 3 and sn.endswith(q):
             match, extra = 1, len(sn) - len(q)
-        elif len(q) >= 3 and cn and (cn.endswith(q) or cn.startswith(q)):
+        elif len(q) >= 3 and cn and cn.endswith(q):
             match, extra = 1, len(cn) - len(q)
         else:
             continue
         segments = {_norm_ident(s) for s in file.replace("\\", "/").split("/")[:-1]}
         hits = sum(1 for h in hints if h in segments or sn.startswith(h))
+        if file == file_of_src and not hits:
+            # `session.close()` inside async_session.py is a field of another
+            # type; a file reaches itself through `self`/`this`, or through a
+            # full path like `crud.business_ai_result.x()` (hits > 0).
+            continue
         # `extra`: `crud_fcm.py` is a closer match for `fcm` than `crud_business_fcm.py`
         scored.append(((hits, match, -extra, _shared_prefix(file, file_of_src)), node_id))
     if scored:
@@ -572,14 +623,53 @@ def _resolve_qualified(chain: list[str], candidates: list[tuple[str, str]],
     return None
 
 
-def _link_calls(conn: sqlite3.Connection) -> None:
+def _resolve_js_import(spec: str, name: str, file_of_src: str,
+                       by_path: dict[str, str], aliases: list[tuple[str, str]],
+                       by_name: dict[str, list[tuple[str, str]]]) -> str | None:
+    """Target of a call to `name` imported from `spec` in `file_of_src`, or None.
+
+    The specifier resolves like `_resolve_file_deps` does it (relative paths,
+    tsconfig aliases, extensions, index files). The target is the function or
+    method called `name` in that file; for a barrel (`index.*`) re-export, the
+    closest one under the barrel's folder. Package imports resolve to nothing.
+    """
+    if _is_npm_import(spec, aliases):
+        return None
+    resolved = spec
+    for prefix, replacement in aliases:
+        if spec.startswith(prefix):
+            resolved = replacement + spec[len(prefix):]
+            break
+    if resolved.startswith("."):
+        src_dir = str(Path(file_of_src).parent).replace("\\", "/")
+        resolved = os.path.normpath(src_dir + "/" + resolved).replace("\\", "/")
+    target = _try_js_resolve(resolved, by_path)
+    if target is None:
+        return None
+    candidates = by_name.get(name, [])
+    same = [c for c in candidates if c[0] == target]
+    if same:
+        return same[0][1]
+    if Path(target).stem == "index":
+        folder = str(Path(target).parent).replace("\\", "/") + "/"
+        family = _lang_family(target)
+        under = [c for c in candidates
+                 if c[0].startswith(folder) and _lang_family(c[0]) == family]
+        if under:
+            return _closest(under, target)
+    return None
+
+
+def _link_calls(conn: sqlite3.Connection, root: Path | None = None) -> None:
     """Resolve raw callee-name 'calls' edges to function/method node IDs.
 
     Parsers emit (fn_nid, callee_name_string, 'calls') edges.
-    This step resolves the name strings to actual node IDs where possible.
-    A bare `name` prefers a same-file match, then the closest file. A dotted
-    `a.b.name` (Python module or object call) goes through
-    `_resolve_qualified`. Unresolvable edges are deleted.
+    This step resolves the name strings to actual node IDs where possible:
+    - `js:<specifier>#<name>`: a JS/TS imported call, via `_resolve_js_import`;
+    - `jsl:<name>`: a JS/TS local call, same file only;
+    - `a.b.name`: a module or object call, via `_resolve_qualified`;
+    - bare `name`: same file first, then the closest file in the same language.
+    Unresolvable edges are deleted.
 
     Only *unresolved* rows are considered: a row whose `dst` is already a node ID
     was resolved by an earlier run. Re-processing those would delete them, because
@@ -611,6 +701,18 @@ def _link_calls(conn: sqlite3.Connection) -> None:
         )
     }
 
+    # Path index for JS/TS import specifiers: normalised path (and the same
+    # path without its extension) -> file
+    by_path: dict[str, str] = {}
+    for (rel,) in conn.execute("SELECT file FROM nodes WHERE kind='file'"):
+        norm = rel.replace("\\", "/")
+        by_path[norm] = norm
+        for ext in _JS_RESOLVE_EXTS + (".mjs", ".cjs"):
+            if norm.endswith(ext):
+                by_path.setdefault(norm[:-len(ext)], norm)
+                break
+    aliases = _load_path_aliases(root) if root is not None else []
+
     inserts: list[tuple[str, str, str]] = []
     deletions: list[tuple[str, str, str]] = []
 
@@ -620,7 +722,18 @@ def _link_calls(conn: sqlite3.Connection) -> None:
     )):
         deletions.append((src_id, callee_name, 'calls'))
         file_of_src = src_file.get(src_id, "")
-        if "." in callee_name:
+        if callee_name.startswith("js:"):
+            spec, _, name = callee_name[3:].rpartition("#")
+            target_nid = _resolve_js_import(spec, name, file_of_src, by_path,
+                                            aliases, by_name) if spec and name else None
+            if target_nid is None:
+                continue
+        elif callee_name.startswith("jsl:"):
+            same = [n for f, n in by_name.get(callee_name[4:], []) if f == file_of_src]
+            if not same:
+                continue
+            target_nid = same[0]
+        elif "." in callee_name:
             chain = callee_name.split(".")
             candidates = by_name.get(chain[-1], [])
             if not candidates or not all(chain):
@@ -629,7 +742,9 @@ def _link_calls(conn: sqlite3.Connection) -> None:
             if target_nid is None:
                 continue
         else:
-            candidates = by_name.get(callee_name, [])
+            family = _lang_family(file_of_src)
+            candidates = [c for c in by_name.get(callee_name, [])
+                          if _lang_family(c[0]) == family]
             if not candidates:
                 continue
             # Prefer same-file match, then the closest file
@@ -711,8 +826,9 @@ def build(root: Path) -> Path:
     all_hashes: list[tuple] = []
     file_count = 0
 
+    skipped: list[str] = []
     with _timed("parse files"):
-        for path in _walk(root, extensions):
+        for path in _walk(root, extensions, skipped):
             rel = str(path.relative_to(root)).replace("\\", "/")
             ext = _ext_for(path)
             parser = parsers.get(ext)
@@ -721,6 +837,8 @@ def build(root: Path) -> Path:
                 all_hashes.append((rel, _sha1_file(path)))
                 file_count += 1
     log.info("Parsed %d files (%d nodes, %d edges)", file_count, len(all_nodes), len(all_edges))
+    if skipped:
+        log.info("Skipped %d minified file(s)", len(skipped))
 
     with _timed("write nodes/edges"):
         conn.executemany("INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?)", all_nodes)
@@ -737,7 +855,7 @@ def build(root: Path) -> Path:
         _link_inheritance(conn)
 
     with _timed("link calls"):
-        _link_calls(conn)
+        _link_calls(conn, root)
 
     conn.execute("INSERT OR REPLACE INTO meta VALUES ('root',?)", (str(root),))
     conn.execute("INSERT OR REPLACE INTO meta VALUES ('files_parsed',?)", (str(file_count),))
@@ -831,7 +949,7 @@ def update(root: Path) -> tuple[Path, list[str]]:
     _link_tests(conn)
     _resolve_file_deps(conn, root)
     _link_inheritance(conn)
-    _link_calls(conn)
+    _link_calls(conn, root)
 
     conn.execute(
         "INSERT OR REPLACE INTO meta VALUES ('files_parsed',?)",
