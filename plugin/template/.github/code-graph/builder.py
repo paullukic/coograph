@@ -30,7 +30,7 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
+from typing import Generator, Iterable
 
 log = logging.getLogger("code-graph.builder")
 
@@ -210,7 +210,7 @@ _NPM_PREFIXES = frozenset({
 })
 
 
-def _is_npm_import(imp: str, aliases: list[tuple[str, str]]) -> bool:
+def _is_npm_import(imp: str, alias_keys: Iterable[str]) -> bool:
     """Return True if the import looks like an npm package (not local)."""
     # Java/Kotlin/Scala qualified names use dots, not slashes — never npm
     if re.match(r'^[a-z][a-z0-9]*\.', imp) and '/' not in imp:
@@ -223,7 +223,7 @@ def _is_npm_import(imp: str, aliases: list[tuple[str, str]]) -> bool:
     if imp.startswith(".") or imp.startswith("/"):
         return False
     # Check if it matches a known path alias first — those are local
-    for prefix, _ in aliases:
+    for prefix in alias_keys:
         if imp.startswith(prefix):
             return False
     # Scoped package: @scope/name
@@ -249,52 +249,172 @@ def _is_npm_import(imp: str, aliases: list[tuple[str, str]]) -> bool:
     return False
 
 
-def _load_path_aliases(root: Path) -> list[tuple[str, str]]:
-    """Load path aliases from tsconfig.json / jsconfig.json.
+_TSCONFIG_NAMES = ("tsconfig.json", "jsconfig.json")
+_EXTENDS_DEPTH = 5
+# A JSON string (kept), a comment (dropped) or a trailing comma (dropped):
+# tsconfig is JSONC, and `json.loads` rejects both.
+_JSONC_RE = re.compile(r'"(?:[^"\\]|\\.)*"|//[^\n]*|/\*.*?\*/|,(?=\s*[}\]])', re.DOTALL)
 
-    Returns list of (prefix, replacement_dir) tuples.
-    E.g. tsconfig paths {"@/*": ["./src/*"]} -> [("@/", "src/")]
+
+def _read_jsonc(path: Path) -> dict | None:
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="ignore")
+        data = json.loads(_JSONC_RE.sub(
+            lambda m: m.group() if m.group().startswith('"') else "", text))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _tsconfig_options(cfg_path: Path, depth: int = 0,
+                      seen: frozenset = frozenset()) -> tuple[dict, Path | None, Path | None]:
+    """(paths, folder of the config declaring them, absolute baseUrl) for one
+    config, after its relative `extends` chain. A child's `paths` / `baseUrl`
+    override the parent's; package `extends` (`expo/tsconfig.base`) are skipped.
     """
-    aliases: list[tuple[str, str]] = []
-    for name in ("tsconfig.json", "jsconfig.json"):
-        cfg_path = root / name
-        if not cfg_path.exists():
+    if depth > _EXTENDS_DEPTH or cfg_path in seen:
+        return {}, None, None
+    cfg = _read_jsonc(cfg_path)
+    if cfg is None:
+        return {}, None, None
+    paths: dict = {}
+    paths_dir: Path | None = None
+    base_url: Path | None = None
+    parents = cfg.get("extends")
+    for parent in parents if isinstance(parents, list) else [parents]:
+        if not isinstance(parent, str) or not parent.startswith("."):
             continue
+        p = (cfg_path.parent / parent).resolve()
+        if not p.is_file() and p.with_name(p.name + ".json").is_file():
+            p = p.with_name(p.name + ".json")
+        pp, pdir, pbase = _tsconfig_options(p, depth + 1, seen | {cfg_path})
+        if pdir is not None:
+            paths, paths_dir = pp, pdir
+        if pbase is not None:
+            base_url = pbase
+    opts = cfg.get("compilerOptions")
+    if isinstance(opts, dict):
+        if isinstance(opts.get("paths"), dict):
+            paths, paths_dir = opts["paths"], cfg_path.parent
+        if isinstance(opts.get("baseUrl"), str):
+            base_url = (cfg_path.parent / opts["baseUrl"]).resolve()
+    return paths, paths_dir, base_url
+
+
+class _TsConfig:
+    """One folder's effective aliases and baseUrl, as root-relative paths.
+
+    `aliases` holds (text before the key's `*`, text after it or None for an
+    exact key, target templates joined to their anchor), longest prefix first,
+    which is the key TypeScript picks. A target's `*` takes what the key's `*`
+    matched; a target without `*` is used as is.
+    """
+
+    def __init__(self, root: Path, cfg_path: Path) -> None:
+        paths, paths_dir, base_url = _tsconfig_options(cfg_path.resolve())
+        root = root.resolve()
+        anchor = base_url or paths_dir
+        self.base_url = self._rel(root, base_url) if base_url else None
+        self.aliases: list[tuple[str, str | None, list[str]]] = []
+        if anchor is not None:
+            anchor_rel = self._rel(root, anchor)
+            for key, targets in paths.items():
+                if not isinstance(targets, list) or key.count("*") > 1:
+                    continue
+                pre, star, post = key.partition("*")
+                outs = [anchor_rel + "/" + t for t in targets
+                        if isinstance(t, str) and t.count("*") <= 1]
+                if outs:
+                    self.aliases.append((pre, post if star else None, outs))
+        self.aliases.sort(key=lambda a: -len(a[0]))
+        # Keys mark a specifier as local, never a package; a bare `*` key
+        # would mark every import, so it does not count here.
+        self.prefixes = [a[0] for a in self.aliases if a[0]]
+
+    def match(self, spec: str) -> tuple[list[str], str] | None:
+        """(targets, what `*` matched) for the longest key matching `spec`."""
+        for pre, post, targets in self.aliases:
+            if post is None:
+                if spec == pre:
+                    return targets, ""
+            elif (spec.startswith(pre) and spec.endswith(post)
+                  and len(spec) >= len(pre) + len(post)):
+                return targets, spec[len(pre):len(spec) - len(post)]
+        return None
+
+    @staticmethod
+    def _rel(root: Path, p: Path) -> str:
         try:
-            # Strip comments (tsconfig allows them) while preserving
-            # quoted strings that contain /*, //, etc. (e.g. "@/*": ["./src/*"])
-            text = cfg_path.read_text(encoding="utf-8", errors="ignore")
-            text = re.sub(
-                r'"(?:[^"\\]|\\.)*"|//.*?$|/\*.*?\*/',
-                lambda m: m.group() if m.group().startswith('"') else '',
-                text, flags=re.MULTILINE | re.DOTALL,
-            )
-            cfg = json.loads(text)
-        except (json.JSONDecodeError, OSError):
-            continue
+            return os.path.relpath(os.path.normpath(p), root).replace("\\", "/")
+        except ValueError:  # another drive on Windows: matches no file
+            return str(p).replace("\\", "/")
 
-        base_url = cfg.get("compilerOptions", {}).get("baseUrl", ".")
-        paths = cfg.get("compilerOptions", {}).get("paths", {})
 
-        for pattern, targets in paths.items():
-            if not targets or not pattern.endswith("/*"):
-                continue
-            prefix = pattern[:-1]  # "@/*" -> "@/"
-            target = targets[0]    # take first mapping
-            if target.endswith("/*"):
-                target = target[:-1]  # "./src/*" -> "./src/"
-            # Resolve relative to baseUrl
-            resolved = str(Path(base_url) / target).replace("\\", "/")
-            # Normalize: strip leading ./
-            if resolved.startswith("./"):
-                resolved = resolved[2:]
-            if not resolved.endswith("/"):
-                resolved += "/"
-            aliases.append((prefix, resolved))
-            log.info("Path alias: %s -> %s", prefix, resolved)
-        break  # only read first found config
+class _JsResolver:
+    """Resolves a JS/TS specifier the way the importing file's nearest
+    tsconfig.json / jsconfig.json says to, cached per folder."""
 
-    return aliases
+    def __init__(self, root: Path | None) -> None:
+        self.root = root
+        self._by_dir: dict[str, _TsConfig | None] = {}
+
+    def config_for(self, file_rel: str) -> _TsConfig | None:
+        if self.root is None:
+            return None
+        d = os.path.dirname(file_rel.replace("\\", "/"))
+        visited: list[str] = []
+        found: _TsConfig | None = None
+        while True:
+            if d in self._by_dir:
+                found = self._by_dir[d]
+                break
+            visited.append(d)
+            cfg = next((self.root / d / n for n in _TSCONFIG_NAMES
+                        if (self.root / d / n).is_file()), None)
+            if cfg is not None:
+                found = _TsConfig(self.root, cfg)
+                break
+            if not d:
+                break
+            d = os.path.dirname(d)
+        for v in visited:
+            self._by_dir[v] = found
+        return found
+
+    def resolve(self, spec: str, file_rel: str,
+                by_path: dict[str, str]) -> tuple[str | None, bool]:
+        """(target, is_package) for `spec` imported from `file_rel`.
+
+        Order: relative path; for a JS/TS importer, the longest matching alias
+        (each target in turn) and then `baseUrl` (only when a file is there);
+        a package; a root-relative path. Other languages never read tsconfig:
+        a Python `import config` must not land on `config.ts`.
+        """
+        if spec.startswith("."):
+            # "." for a root-level file: "" + "/x" would read as an absolute path
+            src_dir = os.path.dirname(file_rel.replace("\\", "/")) or "."
+            return _try_js_resolve(os.path.normpath(src_dir + "/" + spec).replace("\\", "/"),
+                                   by_path), False
+        cfg = None
+        if _lang_family(file_rel) == ".js" and not spec.startswith("/"):
+            cfg = self.config_for(file_rel)
+        if cfg is not None:
+            found = cfg.match(spec)
+            if found is not None:
+                targets, rest = found
+                for t in targets:
+                    hit = _try_js_resolve(
+                        os.path.normpath(t.replace("*", rest)).replace("\\", "/"), by_path)
+                    if hit is not None:
+                        return hit, False
+            if cfg.base_url is not None:
+                hit = _try_js_resolve(
+                    os.path.normpath(cfg.base_url + "/" + spec).replace("\\", "/"), by_path)
+                if hit is not None:
+                    return hit, False
+        if _is_npm_import(spec, cfg.prefixes if cfg else ()):
+            return None, True
+        return _try_js_resolve(spec.replace("\\", "/"), by_path), False
 
 
 # ---------------------------------------------------------------------------
@@ -304,34 +424,56 @@ def _load_path_aliases(root: Path) -> list[tuple[str, str]]:
 # Extensions to try when resolving TS/JS imports (import './foo' -> foo.ts, foo.tsx, etc.)
 _JS_RESOLVE_EXTS = (".ts", ".tsx", ".js", ".jsx", ".svelte", ".vue",
                     ".css", ".scss", ".less", ".json")
+_JS_INDEX_EXTS = _JS_RESOLVE_EXTS + (".mjs", ".cjs")
 
 
-def _resolve_file_deps(conn: sqlite3.Connection, root: Path) -> None:
+def _js_path_index(files) -> dict[str, str]:
+    """Normalised path, and the same path without its extension, -> path.
+
+    One index for `depends_on` and `calls`, so both resolve a specifier to the
+    same file. `lib/a.ts` beside `lib/a.js`: `./lib/a` is `a.ts`, the
+    extension `tsc` tries first.
+    """
+    by_path: dict[str, str] = {}
+    rank: dict[str, int] = {}
+    for rel in files:
+        norm = rel.replace("\\", "/")
+        by_path[norm] = norm
+    for norm in list(by_path):
+        for i, ext in enumerate(_JS_INDEX_EXTS):
+            if norm.endswith(ext):
+                key = norm[:-len(ext)]
+                if key not in rank and key in by_path:
+                    break  # a real extensionless file wins
+                if i < rank.get(key, len(_JS_INDEX_EXTS)):
+                    by_path[key], rank[key] = norm, i
+                break
+    return by_path
+
+
+def _resolve_file_deps(conn: sqlite3.Connection, root: Path,
+                       resolver: "_JsResolver | None" = None) -> None:
     """Resolve import strings to file->file depends_on edges.
 
     Handles:
-      - TS/JS path aliases from tsconfig.json (@/app/foo -> src/app/foo)
+      - TS/JS path aliases and baseUrl from the importing file's nearest
+        tsconfig.json / jsconfig.json (@/app/foo -> src/app/foo)
       - TS/JS module resolution (try .ts, .tsx, /index.ts, etc.)
       - Java qualified class names and wildcards
       - Stem-based fallback for other languages
     """
-    aliases = _load_path_aliases(root)
+    resolver = resolver or _JsResolver(root)
 
     file_nodes: dict[str, str] = {
         row[0]: row[1]
         for row in conn.execute("SELECT file, id FROM nodes WHERE kind='file'")
     }
 
-    # Normalized path -> fid index (forward slashes, lowercase for matching)
-    by_path: dict[str, str] = {}
-    for rel, fid in file_nodes.items():
-        norm = rel.replace("\\", "/")
-        by_path[norm] = fid
-        # Also index without extension for extensionless imports
-        for ext in _JS_RESOLVE_EXTS:
-            if norm.endswith(ext):
-                by_path[norm[:-len(ext)]] = fid
-                break
+    # Path index shared with _link_calls; values are mapped to file ids here
+    fid_by_norm = {rel.replace("\\", "/"): fid for rel, fid in file_nodes.items()}
+    by_path: dict[str, str] = {
+        key: fid_by_norm[norm] for key, norm in _js_path_index(file_nodes).items()
+    }
 
     by_stem: dict[str, list[tuple[str, str]]] = {}
     for rel, fid in file_nodes.items():
@@ -361,31 +503,15 @@ def _resolve_file_deps(conn: sqlite3.Connection, root: Path) -> None:
     for src_id, imp_str in conn.execute(
         "SELECT src, dst FROM edges WHERE kind='imports'"
     ):
-        target_fid = None
-
-        # Skip npm/external package imports
-        if _is_npm_import(imp_str, aliases):
-            continue
-
-        # -- TS/JS path alias resolution --
-        resolved_imp = imp_str
-        for prefix, replacement in aliases:
-            if imp_str.startswith(prefix):
-                resolved_imp = replacement + imp_str[len(prefix):]
-                break
-
-        # -- TS/JS relative import resolution --
-        if resolved_imp.startswith("."):
-            src_rel = fid_to_rel.get(src_id, "")
-            if src_rel:
-                src_dir = str(Path(src_rel).parent).replace("\\", "/")
-                # Resolve relative path
-                candidate = os.path.normpath(src_dir + "/" + resolved_imp).replace("\\", "/")
-                target_fid = _try_js_resolve(candidate, by_path)
-        elif not resolved_imp.startswith("."):
-            # Absolute alias-resolved path or other
-            norm = resolved_imp.replace("\\", "/")
-            target_fid = _try_js_resolve(norm, by_path)
+        # -- TS/JS: relative, the importing file's tsconfig aliases and
+        # baseUrl, root-relative; npm/external packages are skipped --
+        src_rel = fid_to_rel.get(src_id, "")
+        if imp_str.startswith(".") and not src_rel:
+            target_fid = None
+        else:
+            target_fid, is_package = resolver.resolve(imp_str, src_rel, by_path)
+            if is_package:
+                continue
 
         # -- Java exact qualified match --
         if not target_fid:
@@ -624,43 +750,44 @@ def _resolve_qualified(chain: list[str], candidates: list[tuple[str, str]],
 
 
 def _resolve_js_import(spec: str, name: str, file_of_src: str,
-                       by_path: dict[str, str], aliases: list[tuple[str, str]],
-                       by_name: dict[str, list[tuple[str, str]]]) -> str | None:
+                       by_path: dict[str, str], resolver: _JsResolver,
+                       by_name: dict[str, list[tuple[str, str]]],
+                       default_of: dict[str, str]) -> str | None:
     """Target of a call to `name` imported from `spec` in `file_of_src`, or None.
 
     The specifier resolves like `_resolve_file_deps` does it (relative paths,
-    tsconfig aliases, extensions, index files). The target is the function or
-    method called `name` in that file; for a barrel (`index.*`) re-export, the
-    closest one under the barrel's folder. Package imports resolve to nothing.
+    the importing file's tsconfig aliases and baseUrl, extensions, index
+    files). The target is the function or method called `name` in that file;
+    for a barrel (`index.*`) re-export, the closest one under the barrel's
+    folder. `default:<local>` is a default import: the target file's
+    default-exported name comes first, the local name second. Package
+    imports resolve to nothing.
     """
-    if _is_npm_import(spec, aliases):
-        return None
-    resolved = spec
-    for prefix, replacement in aliases:
-        if spec.startswith(prefix):
-            resolved = replacement + spec[len(prefix):]
-            break
-    if resolved.startswith("."):
-        src_dir = str(Path(file_of_src).parent).replace("\\", "/")
-        resolved = os.path.normpath(src_dir + "/" + resolved).replace("\\", "/")
-    target = _try_js_resolve(resolved, by_path)
+    target, _ = resolver.resolve(spec, file_of_src, by_path)
     if target is None:
         return None
-    candidates = by_name.get(name, [])
-    same = [c for c in candidates if c[0] == target]
-    if same:
-        return same[0][1]
-    if Path(target).stem == "index":
-        folder = str(Path(target).parent).replace("\\", "/") + "/"
-        family = _lang_family(target)
-        under = [c for c in candidates
-                 if c[0].startswith(folder) and _lang_family(c[0]) == family]
-        if under:
-            return _closest(under, target)
+    if name.startswith("default:"):
+        local = name[len("default:"):]
+        names = [n for n in (default_of.get(target), local) if n]
+    else:
+        names = [name]
+    for n in dict.fromkeys(names):
+        candidates = by_name.get(n, [])
+        same = [c for c in candidates if c[0] == target]
+        if same:
+            return same[0][1]
+        if Path(target).stem == "index":
+            folder = str(Path(target).parent).replace("\\", "/") + "/"
+            family = _lang_family(target)
+            under = [c for c in candidates
+                     if c[0].startswith(folder) and _lang_family(c[0]) == family]
+            if under:
+                return _closest(under, target)
     return None
 
 
-def _link_calls(conn: sqlite3.Connection, root: Path | None = None) -> None:
+def _link_calls(conn: sqlite3.Connection, root: Path | None = None,
+                resolver: _JsResolver | None = None) -> None:
     """Resolve raw callee-name 'calls' edges to function/method node IDs.
 
     Parsers emit (fn_nid, callee_name_string, 'calls') edges.
@@ -701,17 +828,18 @@ def _link_calls(conn: sqlite3.Connection, root: Path | None = None) -> None:
         )
     }
 
-    # Path index for JS/TS import specifiers: normalised path (and the same
-    # path without its extension) -> file
-    by_path: dict[str, str] = {}
-    for (rel,) in conn.execute("SELECT file FROM nodes WHERE kind='file'"):
-        norm = rel.replace("\\", "/")
-        by_path[norm] = norm
-        for ext in _JS_RESOLVE_EXTS + (".mjs", ".cjs"):
-            if norm.endswith(ext):
-                by_path.setdefault(norm[:-len(ext)], norm)
-                break
-    aliases = _load_path_aliases(root) if root is not None else []
+    # Path index for JS/TS import specifiers, shared with _resolve_file_deps
+    by_path = _js_path_index(
+        rel for (rel,) in conn.execute("SELECT file FROM nodes WHERE kind='file'"))
+    resolver = resolver or _JsResolver(root)
+    # JS/TS file -> the name its default export binds (`export default bar`)
+    default_of: dict[str, str] = {
+        file.replace("\\", "/"): name
+        for file, name in conn.execute(
+            "SELECT n.file, e.dst FROM edges e JOIN nodes n ON n.id = e.src "
+            "WHERE e.kind='exports_default'"
+        )
+    }
 
     inserts: list[tuple[str, str, str]] = []
     deletions: list[tuple[str, str, str]] = []
@@ -724,8 +852,8 @@ def _link_calls(conn: sqlite3.Connection, root: Path | None = None) -> None:
         file_of_src = src_file.get(src_id, "")
         if callee_name.startswith("js:"):
             spec, _, name = callee_name[3:].rpartition("#")
-            target_nid = _resolve_js_import(spec, name, file_of_src, by_path,
-                                            aliases, by_name) if spec and name else None
+            target_nid = _resolve_js_import(spec, name, file_of_src, by_path, resolver,
+                                            by_name, default_of) if spec and name else None
             if target_nid is None:
                 continue
         elif callee_name.startswith("jsl:"):
@@ -848,14 +976,15 @@ def build(root: Path) -> Path:
     with _timed("link tests"):
         _link_tests(conn)
 
+    resolver = _JsResolver(root)  # one tsconfig cache for both phases
     with _timed("resolve file deps"):
-        _resolve_file_deps(conn, root)
+        _resolve_file_deps(conn, root, resolver)
 
     with _timed("link inheritance"):
         _link_inheritance(conn)
 
     with _timed("link calls"):
-        _link_calls(conn, root)
+        _link_calls(conn, root, resolver)
 
     conn.execute("INSERT OR REPLACE INTO meta VALUES ('root',?)", (str(root),))
     conn.execute("INSERT OR REPLACE INTO meta VALUES ('files_parsed',?)", (str(file_count),))
@@ -925,6 +1054,10 @@ def update(root: Path) -> tuple[Path, list[str]]:
         ).fetchall()
         for (fid,) in fid_rows:
             conn.execute("DELETE FROM edges WHERE src=? OR dst=?", (fid, fid))
+        # Resolved edges out of the file's functions and classes too: node ids
+        # are stable, so a re-parse would keep a call the new code no longer
+        # makes (a renamed default export, a dropped import) next to the new one.
+        conn.execute("DELETE FROM edges WHERE src IN (SELECT id FROM nodes WHERE file=?)", (rel,))
         conn.execute("DELETE FROM nodes WHERE file=?", (rel,))
         conn.execute("DELETE FROM file_hashes WHERE file=?", (rel,))
 
@@ -947,9 +1080,10 @@ def update(root: Path) -> tuple[Path, list[str]]:
     conn.executemany("INSERT OR IGNORE INTO edges VALUES (?,?,?)", all_edges)
 
     _link_tests(conn)
-    _resolve_file_deps(conn, root)
+    resolver = _JsResolver(root)
+    _resolve_file_deps(conn, root, resolver)
     _link_inheritance(conn)
-    _link_calls(conn, root)
+    _link_calls(conn, root, resolver)
 
     conn.execute(
         "INSERT OR REPLACE INTO meta VALUES ('files_parsed',?)",

@@ -160,7 +160,8 @@ Hooks run `--update` silently. If `graph.db` doesn't exist, they exit without er
 
 ```
 nodes: id, kind (file|function|method|class), name, file, start_line, end_line
-edges: src, dst, kind (imports|contains|calls|tests_for)
+edges: src, dst, kind (imports|depends_on|contains|calls|inherits|implements|tests_for|exports_default)
+       exports_default: JS/TS file -> the name its default export binds
 meta:  key, value (root, files_parsed, stacks)
 file_hashes: file, sha1 (for incremental updates)
 ```
@@ -180,4 +181,5 @@ file_hashes: file, sha1 (for incremental updates)
 - `.code-graph/` is generated and should be in `.gitignore`.
 - `builder.py` is a library — use `server.py --build` as the CLI entry point, not `python builder.py` directly.
 - The `--build` and `--update` flags do **not** require the `mcp` package.
+- JS/TS imports resolve the way `tsc` does for the importing file: its nearest `tsconfig.json` (else `jsconfig.json`), following relative `extends` (SvelteKit's `./.svelte-kit/tsconfig.json`; run `svelte-kit sync` once so it exists), with `paths` (longest key first, each target in turn) and `baseUrl`. Package `extends`, project `references` and `package.json` `exports` maps are not read. A default import links to the name the target file exports as default (`export default function bar`, `export { bar as default }`, `module.exports = bar`).
 - Tree-sitter language packages are optional — uninstalled languages fall back to regex parsers automatically. Install via `pip install -r requirements.txt` or `uv pip install -r requirements.txt`.

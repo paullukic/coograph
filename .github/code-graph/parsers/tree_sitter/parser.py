@@ -20,7 +20,7 @@ from .. import nid
 from .core import Parser, ancestor, get_lang, txt, walk
 from .languages import (CFG, JS_EXTS, JS_FN_VALUE_TYPES, KIND_OVERRIDE, calls_js,
                         calls_kotlin, calls_php, calls_python, js_bound_fn_name,
-                        js_import_map, python_import_aliases)
+                        js_default_export, js_import_map, python_import_aliases)
 
 
 def parse_file(path: Path, rel: str, nodes: list, edges: list) -> None:
@@ -50,6 +50,11 @@ def parse_file(path: Path, rel: str, nodes: list, edges: list) -> None:
     _pass_calls(root, src, ext, rel, fid, class_types, fn_types, edges)
 
     cfg["import_fn"](root, src, fid, edges)
+
+    if ext in JS_EXTS:
+        default_name = js_default_export(root, src)
+        if default_name:
+            edges.append((fid, default_name, "exports_default"))
 
 
 # ---------------------------------------------------------------------------

@@ -284,6 +284,56 @@ def js_import_map(root, src: bytes) -> dict[str, tuple[str, str]]:
     return imap
 
 
+_JS_DEFAULT_DECLS = frozenset({
+    "function_declaration", "generator_function_declaration", "class_declaration",
+    "abstract_class_declaration", "function", "function_expression", "class",
+})
+
+
+def js_default_export(root, src: bytes) -> str | None:
+    """The name a JS/TS file's default export binds, or None.
+
+    `export default function bar` / `class Bar`, `export default bar;`,
+    `export { bar as default }`, CommonJS `module.exports = bar` (or a named
+    function). An anonymous default (`export default () => {}`) has none.
+    """
+    for node in root.children:
+        if node.type == "export_statement":
+            if node.child_by_field_name("source") is not None:
+                continue  # `export { x as default } from './y'`: x lives in y
+            kids = node.children
+            if any(c.type == "default" for c in kids):
+                for c in kids:
+                    if c.type == "identifier":
+                        return txt(c, src)
+                    if c.type in _JS_DEFAULT_DECLS:
+                        name = c.child_by_field_name("name")
+                        return txt(name, src) if name else None
+                return None
+            for clause in kids:
+                if clause.type != "export_clause":
+                    continue
+                for sp in clause.children:
+                    alias = sp.child_by_field_name("alias") if sp.type == "export_specifier" else None
+                    name = sp.child_by_field_name("name") if alias else None
+                    if alias and name and txt(alias, src) == "default":
+                        return txt(name, src)
+        elif node.type == "expression_statement" and node.children:
+            expr = node.children[0]
+            if expr.type != "assignment_expression":
+                continue
+            left = expr.child_by_field_name("left")
+            right = expr.child_by_field_name("right")
+            if left is None or right is None or txt(left, src) != "module.exports":
+                continue
+            if right.type == "identifier":
+                return txt(right, src)
+            if right.type in _JS_DEFAULT_DECLS:
+                name = right.child_by_field_name("name")
+                return txt(name, src) if name else None
+    return None
+
+
 def _js_dotted(node, src: bytes) -> list[str] | None:
     if node.type in ("identifier", "this"):
         return [txt(node, src)]
@@ -302,7 +352,8 @@ def calls_js(fn_node, src: bytes, stop_types: frozenset,
     """Callee references from a JS/TS function body.
 
     - imported `f()` / `ns.f()` -> `js:<specifier>#<name>` (resolved through
-      the import in `builder._link_calls`);
+      the import in `builder._link_calls`); a default import or a direct call
+      of a whole-module `require` -> `js:<specifier>#default:<local>`;
     - local `f()` / `this.f()` -> `jsl:f` (same file only);
     - `a.b.f()` on a local object -> `a.b.f` (the Python dotted rules);
     - member calls on platform globals and chained calls -> nothing.
@@ -321,7 +372,10 @@ def calls_js(fn_node, src: bytes, stop_types: frozenset,
                     name = txt(fn, src)
                     if name in imap:
                         spec, imported = imap[name]
-                        calls.add(f"js:{spec}#{name if imported in ('*', 'default') else imported}")
+                        # A default import, or a whole-module `require` called
+                        # directly, calls what the target file exports as default.
+                        calls.add(f"js:{spec}#default:{name}" if imported in ("*", "default")
+                                  else f"js:{spec}#{imported}")
                     elif len(name) >= 2:
                         calls.add(f"jsl:{name}")
                 elif fn is not None and fn.type == "member_expression":
