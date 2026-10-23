@@ -187,6 +187,207 @@ def calls_php(fn_node, src: bytes, fn_types: frozenset, refs: set[str]) -> set[s
     return calls
 
 
+# --- JS / TS -----------------------------------------------------------------
+
+JS_EXTS = frozenset({".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"})
+# `const f = () => {}`, `const f = function () {}`, class field `f = () => {}`
+JS_BOUND_TYPES = frozenset({"variable_declarator", "public_field_definition",
+                            "field_definition"})
+JS_FN_VALUE_TYPES = frozenset({"arrow_function", "function_expression",
+                               "function", "generator_function"})
+# Roots of member calls that are platform globals, never project code.
+JS_GLOBAL_ROOTS = frozenset({
+    "console", "Math", "JSON", "Object", "Array", "String", "Number", "Promise",
+    "Date", "Reflect", "Symbol", "window", "document", "navigator", "location",
+    "history", "localStorage", "sessionStorage", "process", "module", "exports",
+    "require", "chrome", "browser", "globalThis", "self", "Intl", "URL",
+    "performance", "crypto", "fetch", "Buffer", "React",
+})
+
+
+def js_bound_fn_name(node, src: bytes) -> str | None:
+    """Name of a function bound to a variable or class field, else None."""
+    if node.type not in JS_BOUND_TYPES:
+        return None
+    value = node.child_by_field_name("value")
+    if value is None or value.type not in JS_FN_VALUE_TYPES:
+        return None
+    name = node.child_by_field_name("name") or node.child_by_field_name("property")
+    if name is None or name.type not in ("identifier", "property_identifier",
+                                         "private_property_identifier"):
+        return None
+    return txt(name, src)
+
+
+def _string_spec(node, src: bytes) -> str | None:
+    for ch in walk(node):
+        if ch.type == "string_fragment":
+            return txt(ch, src)
+    return None
+
+
+def js_import_map(root, src: bytes) -> dict[str, tuple[str, str]]:
+    """Local name -> (module specifier, imported name) for one JS/TS file.
+
+    Imported name is the exported name for `{ a as b }` and destructured
+    `require`, `default` for a default import, `*` for a namespace import or
+    a whole-module `require`.
+    """
+    imap: dict[str, tuple[str, str]] = {}
+    for node in walk(root):
+        if node.type == "import_statement":
+            source = node.child_by_field_name("source")
+            spec = _string_spec(source, src) if source else None
+            if not spec:
+                continue
+            for clause in node.children:
+                if clause.type != "import_clause":
+                    continue
+                for ch in clause.children:
+                    if ch.type == "identifier":
+                        imap[txt(ch, src)] = (spec, "default")
+                    elif ch.type == "namespace_import":
+                        for n in ch.children:
+                            if n.type == "identifier":
+                                imap[txt(n, src)] = (spec, "*")
+                    elif ch.type == "named_imports":
+                        for sp in ch.children:
+                            if sp.type != "import_specifier":
+                                continue
+                            name = sp.child_by_field_name("name")
+                            alias = sp.child_by_field_name("alias")
+                            if name:
+                                imap[txt(alias or name, src)] = (spec, txt(name, src))
+        elif node.type == "variable_declarator":
+            value = node.child_by_field_name("value")
+            if value is None or value.type != "call_expression":
+                continue
+            fn = value.child_by_field_name("function")
+            if fn is None or txt(fn, src) != "require":
+                continue
+            args = value.child_by_field_name("arguments")
+            spec = _string_spec(args, src) if args else None
+            target = node.child_by_field_name("name")
+            if not spec or target is None:
+                continue
+            if target.type == "identifier":
+                imap[txt(target, src)] = (spec, "*")
+            elif target.type == "object_pattern":
+                for p in target.children:
+                    if p.type == "shorthand_property_identifier_pattern":
+                        imap[txt(p, src)] = (spec, txt(p, src))
+                    elif p.type == "pair_pattern":
+                        key = p.child_by_field_name("key")
+                        val = p.child_by_field_name("value")
+                        if key and val and val.type == "identifier":
+                            imap[txt(val, src)] = (spec, txt(key, src))
+    return imap
+
+
+def _js_dotted(node, src: bytes) -> list[str] | None:
+    if node.type in ("identifier", "this"):
+        return [txt(node, src)]
+    if node.type == "member_expression":
+        obj = node.child_by_field_name("object")
+        prop = node.child_by_field_name("property")
+        head = _js_dotted(obj, src) if obj else None
+        if head is None or prop is None or prop.type != "property_identifier":
+            return None
+        return head + [txt(prop, src)]
+    return None
+
+
+def calls_js(fn_node, src: bytes, stop_types: frozenset,
+             imap: dict[str, tuple[str, str]]) -> set[str]:
+    """Callee references from a JS/TS function body.
+
+    - imported `f()` / `ns.f()` -> `js:<specifier>#<name>` (resolved through
+      the import in `builder._link_calls`);
+    - local `f()` / `this.f()` -> `jsl:f` (same file only);
+    - `a.b.f()` on a local object -> `a.b.f` (the Python dotted rules);
+    - member calls on platform globals and chained calls -> nothing.
+    Does not descend into nested function declarations or classes.
+    """
+    calls: set[str] = set()
+    body = fn_node.child_by_field_name("value") if fn_node.type in JS_BOUND_TYPES else fn_node
+
+    def _visit(node):
+        for child in node.children:
+            if child.type in stop_types:
+                continue
+            if child.type == "call_expression":
+                fn = child.child_by_field_name("function")
+                if fn is not None and fn.type == "identifier":
+                    name = txt(fn, src)
+                    if name in imap:
+                        spec, imported = imap[name]
+                        calls.add(f"js:{spec}#{name if imported in ('*', 'default') else imported}")
+                    elif len(name) >= 2:
+                        calls.add(f"jsl:{name}")
+                elif fn is not None and fn.type == "member_expression":
+                    obj = fn.child_by_field_name("object")
+                    prop = fn.child_by_field_name("property")
+                    parts = _js_dotted(obj, src) if obj else None
+                    if parts and prop is not None and prop.type == "property_identifier":
+                        name = txt(prop, src)
+                        root = parts[0]
+                        if parts == ["this"]:
+                            calls.add(f"jsl:{name}")
+                        elif root in imap:
+                            if len(parts) == 1:
+                                calls.add(f"js:{imap[root][0]}#{name}")
+                        elif root not in JS_GLOBAL_ROOTS and root != "this":
+                            calls.add(".".join(parts + [name]))
+            _visit(child)
+
+    if body is not None:
+        _visit(body)
+    return calls
+
+
+# --- Kotlin ------------------------------------------------------------------
+
+def _kt_dotted(node, src: bytes) -> list[str] | None:
+    if node.type in ("identifier", "simple_identifier"):
+        return [txt(node, src)]
+    if node.type == "this_expression":
+        return ["this"]
+    if node.type == "navigation_expression" and node.children:
+        head = _kt_dotted(node.children[0], src)
+        last = node.children[-1]
+        if last.type == "navigation_suffix":
+            last = next((c for c in last.children
+                         if c.type in ("identifier", "simple_identifier")), None)
+        if head is None or last is None or last.type not in ("identifier", "simple_identifier"):
+            return None
+        return head + [txt(last, src)]
+    return None
+
+
+def calls_kotlin(fn_node, src: bytes, stop_types: frozenset) -> set[str]:
+    """Callee names from a Kotlin function body: `f()` and `this.f()` give `f`,
+    `a.b.f()` gives `a.b.f`. Chained calls give nothing."""
+    calls: set[str] = set()
+
+    def _visit(node):
+        for child in node.children:
+            if child.type in stop_types:
+                continue
+            if child.type == "call_expression" and child.children:
+                parts = _kt_dotted(child.children[0], src)
+                if parts and len(parts[-1]) >= 2:
+                    if len(parts) == 1:
+                        calls.add(parts[0])
+                    elif parts[:-1] == ["this"]:
+                        calls.add(parts[-1])
+                    else:
+                        calls.add(".".join(parts))
+            _visit(child)
+
+    _visit(fn_node)
+    return calls
+
+
 # ---------------------------------------------------------------------------
 # Import extractors
 # ---------------------------------------------------------------------------
@@ -356,6 +557,8 @@ CFG: dict[str, dict] = {
     ),
 }
 CFG[".jsx"] = CFG[".js"]
+CFG[".mjs"] = CFG[".js"]
+CFG[".cjs"] = CFG[".js"]
 CFG[".tsx"] = CFG[".ts"]
 
 

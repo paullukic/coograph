@@ -3,7 +3,7 @@
 Three sequential passes per file:
   1. Classes / structs / interfaces / enums (+ inheritance edges).
   2. Functions / methods (+ contains edges; method-vs-function via class ancestor).
-  3. Calls (Python and PHP only — emit `calls` edges + PHP `imports` for class refs).
+  3. Calls (Python, PHP, JS/TS, Kotlin — emit `calls` edges + PHP `imports` for class refs).
 
 Then runs the language-specific import extractor for file-level edges.
 
@@ -18,7 +18,9 @@ from pathlib import Path
 
 from .. import nid
 from .core import Parser, ancestor, get_lang, txt, walk
-from .languages import CFG, KIND_OVERRIDE, calls_php, calls_python, python_import_aliases
+from .languages import (CFG, JS_EXTS, JS_FN_VALUE_TYPES, KIND_OVERRIDE, calls_js,
+                        calls_kotlin, calls_php, calls_python, js_bound_fn_name,
+                        js_import_map, python_import_aliases)
 
 
 def parse_file(path: Path, rel: str, nodes: list, edges: list) -> None:
@@ -126,8 +128,41 @@ def _emit_inheritance(node, src, ext, cls_id, edges):
 # Pass 2: functions / methods
 # ---------------------------------------------------------------------------
 
+def _js_bound_name(node, src, ext, fn_types) -> str | None:
+    """Name of a JS/TS arrow/expression function that is a graph node.
+
+    Only module-level bindings and class fields count: a `const f = () => {}`
+    inside another function stays part of that function's body.
+    """
+    if ext not in JS_EXTS:
+        return None
+    name = js_bound_fn_name(node, src)
+    if name is None or ancestor(node, fn_types | JS_FN_VALUE_TYPES) is not None:
+        return None
+    return name
+
+
 def _pass_functions(root, src, ext, rel, fid, class_types, fn_types, nodes, edges):
     for node in walk(root):
+        bound_name = _js_bound_name(node, src, ext, fn_types)
+        if bound_name is not None:
+            name = bound_name
+            if len(name) < 2:
+                continue
+            cls_anc = ancestor(node, class_types)
+            cls_name_node = cls_anc.child_by_field_name("name") if cls_anc is not None else None
+            if cls_name_node is not None:
+                cls_name = txt(cls_name_node, src)
+                fn_nid = nid("method", rel, f"{cls_name}.{name}")
+                nodes.append((fn_nid, "method", name, rel,
+                              node.start_point[0] + 1, node.end_point[0] + 1))
+                edges.append((nid("class", rel, cls_name), fn_nid, "contains"))
+            else:
+                fn_nid = nid("function", rel, f"{name}_{node.start_point[0]+1}")
+                nodes.append((fn_nid, "function", name, rel,
+                              node.start_point[0] + 1, node.end_point[0] + 1))
+                edges.append((fid, fn_nid, "contains"))
+            continue
         if node.type not in fn_types:
             continue
 
@@ -205,7 +240,7 @@ def _pass_functions(root, src, ext, rel, fid, class_types, fn_types, nodes, edge
 
 
 # ---------------------------------------------------------------------------
-# Pass 3: calls (Python + PHP)
+# Pass 3: calls (Python, PHP, JS/TS, Kotlin)
 # ---------------------------------------------------------------------------
 
 def _pass_calls(root, src, ext, rel, fid, class_types, fn_types, edges):
@@ -218,6 +253,30 @@ def _pass_calls(root, src, ext, rel, fid, class_types, fn_types, edges):
             if fn_nid is None:
                 continue
             for callee in calls_python(fn_node, src, fn_types, aliases):
+                edges.append((fn_nid, callee, "calls"))
+    elif ext in JS_EXTS:
+        imap = js_import_map(root, src)
+        stop = fn_types | class_types
+        for fn_node in walk(root):
+            if fn_node.type in fn_types:
+                fn_nid = _fn_nid_for(fn_node, src, ext, rel, class_types)
+            elif _js_bound_name(fn_node, src, ext, fn_types) is not None:
+                fn_nid = _fn_nid_for(fn_node, src, ext, rel, class_types, fn_types)
+            else:
+                continue
+            if fn_nid is None:
+                continue
+            for callee in calls_js(fn_node, src, stop, imap):
+                edges.append((fn_nid, callee, "calls"))
+    elif ext == ".kt":
+        stop = fn_types | class_types
+        for fn_node in walk(root):
+            if fn_node.type not in fn_types:
+                continue
+            fn_nid = _fn_nid_for(fn_node, src, ext, rel, class_types)
+            if fn_nid is None:
+                continue
+            for callee in calls_kotlin(fn_node, src, stop):
                 edges.append((fn_nid, callee, "calls"))
     elif ext == ".php":
         file_refs: set[str] = set()
@@ -235,12 +294,17 @@ def _pass_calls(root, src, ext, rel, fid, class_types, fn_types, edges):
             edges.append((fid, ref, "imports"))
 
 
-def _fn_nid_for(fn_node, src, ext, rel, class_types) -> str | None:
-    """Compute the same nid `_pass_functions` produced for this function/method."""
-    name_node = fn_node.child_by_field_name("name")
-    if not name_node:
-        return None
-    fn_name = txt(name_node, src)
+def _fn_nid_for(fn_node, src, ext, rel, class_types, fn_types=None) -> str | None:
+    """Compute the same nid `_pass_functions` produced for this function/method.
+
+    Pass `fn_types` for a JS/TS bound function (`const f = () => {}`)."""
+    if fn_types is not None:
+        fn_name = _js_bound_name(fn_node, src, ext, fn_types)
+    else:
+        name_node = fn_node.child_by_field_name("name")
+        if not name_node:
+            return None
+        fn_name = txt(name_node, src)
     if not fn_name or len(fn_name) < 2:
         return None
     cls_anc = ancestor(fn_node, class_types)
