@@ -58,7 +58,7 @@ signals file.
 |---|---|---|---|
 | `graph-first` | `graph-first` | deterministic | a `Grep` or `Glob` call happens before the session's first graph access (a `mcp__code-graph__*` tool or a shell command containing both `sqlite3` and `.code-graph`), while `.code-graph/graph.db` exists. `proof` says what happened later: `mcp-later`, `sqlite-later`, or `total-bypass`. Subagent (sidechain) calls are ignored. |
 | `openspec-gate` | `openspec-gate` | heuristic | two or more source files edited, nothing in the session touched `openspec/changes`, and no active change directory exists at capture time. `openspec-gate-warn.py` warns live on the same conditions, once per session, at the second distinct source file; the detector stays heuristic |
-| `scope-warning` | `scope` | deterministic | `warn-scope.py` printed its warning (hook-emitted) |
+| `scope-warning` | `scope` | deterministic | `warn-scope.py` blocked an out-of-scope edit (hook-emitted; a warning before retro-2) |
 | `generated-file-block` | `generated-files` | deterministic | `block-generated.py` blocked an edit (hook-emitted) |
 | `build-retry` | none | deterministic | the same shell command ran three or more times with at least two failures |
 | `user-correction` | none | heuristic | a user message matched one of `correction_patterns` right after a tool call. Pattern id only. |
@@ -215,7 +215,7 @@ attachment the model never reads. A probe on 2026-10-06 proved it: the model, as
 quote every message it received after a warned edit, answered `NONE`. Call
 `warn_model(payload, text)` from `_coograph_guard.py` and exit 0; it prints
 `hookSpecificOutput.additionalContext` for the model and `systemMessage` for the user.
-Copy the fallback from `warn-scope.py` so the hook still speaks without the guard module.
+Copy the fallback from `no-new-deps-warn.py` so the hook still speaks without the guard module.
 A blocking hook is the exception: exit 2 hands stderr to the model as the reason.
 
 Retro counts a rule's outcomes only from its `outcomes_since` date on (an optional rule

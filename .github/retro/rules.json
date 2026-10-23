@@ -38,13 +38,13 @@
         "file": ".claude/hooks/warn-scope.py",
         "anchor": "warn-scope"
       },
-      "enforcement": "hook-warn",
+      "enforcement": "hook-block",
       "hard": false,
       "detector": "scope-warning",
       "added": "2026-09-19",
       "last_triggered": null,
-      "last_changed": "2026-09-25",
-      "outcomes_since": "2026-10-06"
+      "last_changed": "2026-10-23",
+      "outcomes_since": "2026-10-23"
     },
     {
       "id": "generated-files",
@@ -170,8 +170,8 @@
     "11111111-aaaa-4bbb-8ccc-"
   ],
   "last_retro": {
-    "date": "2026-09-25T09:01:37Z",
-    "session_id": "0716f0ec-746c-4a09-b5de-df3767b44273",
-    "captured_sessions": 9
+    "date": "2026-10-23T14:19:26Z",
+    "session_id": "cb6c9014-a172-4531-a5fc-e6d84851c485",
+    "captured_sessions": 6
   }
 }

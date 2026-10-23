@@ -38,13 +38,13 @@
         "file": ".claude/hooks/warn-scope.py",
         "anchor": "warn-scope"
       },
-      "enforcement": "hook-warn",
+      "enforcement": "hook-block",
       "hard": false,
       "detector": "scope-warning",
       "added": "2026-09-19",
       "last_triggered": null,
       "last_changed": null,
-      "outcomes_since": "2026-10-06"
+      "outcomes_since": "2026-10-23"
     },
     {
       "id": "generated-files",

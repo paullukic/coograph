@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""warn-scope: PreToolUse hook that warns on edits outside the active OpenSpec.
+"""warn-scope: PreToolUse hook that blocks edits outside the active OpenSpec.
 
 The active OpenSpec is the open change in openspec/changes/<slug>/ (not
 archive) whose tasks.md was modified most recently (the change directory's
 own mtime only when no open change has a tasks.md). Paths referenced in
 backticks in that tasks.md are in scope; a token ending in '/' covers every
-file under it. Warns if the current edit target isn't covered.
+file under it. Blocks if the current edit target isn't covered.
 
 Silent for: no active OpenSpec, a tasks.md with no paths, targets outside the
-project root, and anything under openspec/. Warns once per path per session
-(marker .coograph/markers/scope-warned-<sid>); a repeat records a
-`suppressed` decision and no violation.
+project root, and anything under openspec/.
 
-Never blocks: the warning goes to the model as additionalContext (and to the
-user as systemMessage) with exit 0, without stopping the tool call.
+Blocks: exit 2 with the reason on stderr, which Claude Code hands to the
+model. Every block records a violation and a `blocked` decision; there is no
+once-per-path suppression, because a blocked edit did not happen. Adding the
+path (or its folder, with a trailing '/') to tasks.md lets the edit through.
+(escalated by coograph-retro on 2026-10-23 from openspec/changes/2026-10-23-retro-2)
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -27,23 +27,13 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True  # keep __pycache__/ out of .claude/hooks/
 try:
-    from _coograph_guard import should_skip, warn_model
+    from _coograph_guard import should_skip
 except ImportError:  # guard not copied next to this hook: run unguarded
     def should_skip(payload: dict, hook_file: str) -> bool:
         return False
-
-    def warn_model(payload: dict, text: str) -> None:
-        # Same JSON as _coograph_guard.warn_model: stderr with exit 1 never
-        # reaches the model, additionalContext does.
-        try:
-            print(json.dumps({"systemMessage": text, "hookSpecificOutput": {
-                "hookEventName": str(payload.get("hook_event_name") or "PreToolUse"),
-                "additionalContext": text}}))
-        except Exception:
-            pass
 try:
     import _coograph_signals as signals
-except ImportError:  # Retro store not copied next to this hook: warn only
+except ImportError:  # Retro store not copied next to this hook: block only
     signals = None
 
 BACKTICK_PATH_RE = re.compile(r"`([^`\s]+)`")
@@ -55,8 +45,6 @@ PATH_SUFFIXES = {
     ".css", ".scss", ".sql",
 }
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
-MARKER_DIR = "markers"
-_SAFE_SID = re.compile(r"[^A-Za-z0-9_-]")
 
 
 def _strip_dot_slash(token: str) -> str:
@@ -138,26 +126,6 @@ def _covered(rel: str, target_name: str, scope: set[str]) -> bool:
     return False
 
 
-def _already_warned(cwd: Path, sid: str, rel: str) -> bool:
-    """True when this path was warned about earlier in the session; else
-    remember it. An unwritable .coograph/ degrades to warning every time."""
-    marker = cwd / ".coograph" / MARKER_DIR / f"scope-warned-{sid}"
-    key = hashlib.sha1(rel.encode("utf-8", "replace")).hexdigest()[:12]
-    try:
-        seen = set(marker.read_text(encoding="utf-8").split())
-    except OSError:
-        seen = set()
-    if key in seen:
-        return True
-    try:
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        with marker.open("a", encoding="utf-8") as fh:
-            fh.write(key + "\n")
-    except OSError:
-        pass
-    return False
-
-
 def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -200,22 +168,18 @@ def main() -> int:
     if _covered(rel, target.name, scope):
         return 0
 
-    sid = _SAFE_SID.sub("", str(payload.get("session_id") or "unknown"))[:64] or "unknown"
-    if _already_warned(root, sid, rel):
-        _decide(payload, root, rel, "suppressed")
-        return 0
-
-    warn_model(payload, (
-        f"[warn-scope] editing {rel} but active OpenSpec "
+    print(
+        f"[scope] blocked: editing {rel}, but the active OpenSpec "
         f"'{slug}' does not reference this path in tasks.md. "
-        f"Confirm intent or update tasks.md."
-    ))
+        f"Add it to tasks.md (or ask the user to widen the change), then retry.",
+        file=sys.stderr,
+    )
     _emit_signal(payload, root, rel, slug)
-    return 0
+    return 2
 
 
 def _emit_signal(payload: dict, cwd: Path, rel: str, slug: str) -> None:
-    """Record the warning for Retro. Never affects the hook's own behavior."""
+    """Record the block for Retro. Never affects the hook's own behavior."""
     if signals is None:
         return
     try:
@@ -231,7 +195,7 @@ def _emit_signal(payload: dict, cwd: Path, rel: str, slug: str) -> None:
         ))
     except Exception:
         pass
-    _decide(payload, cwd, rel, "warned")
+    _decide(payload, cwd, rel, "blocked")
 
 
 def _decide(payload: dict, cwd: Path, rel: str, action: str) -> None:

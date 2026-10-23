@@ -662,6 +662,14 @@ def _warned(test: unittest.TestCase, proc: subprocess.CompletedProcess, tag: str
     return ctx
 
 
+def _blocked(test: unittest.TestCase, proc: subprocess.CompletedProcess, tag: str) -> str:
+    """A block hook stops the call: exit 2, the reason on stderr (Claude Code
+    hands it to the model), nothing on stdout."""
+    test.assertEqual((proc.returncode, proc.stdout), (2, ""))
+    test.assertTrue(proc.stderr.startswith(tag), proc.stderr)
+    return proc.stderr
+
+
 class HookDecisionRulesTests(unittest.TestCase):
     """Every rule hook records what it decided, so capture can learn what followed."""
 
@@ -830,7 +838,7 @@ class HookModeTests(unittest.TestCase):
         self.assertEqual(line, "[retro] 3 sessions captured, 1 rules over threshold (graph-first 3x), run /coograph-retro")
         self.assertLessEqual(len(line), 160)
 
-    def test_warn_scope_emits(self) -> None:
+    def test_warn_scope_blocks_and_emits(self) -> None:
         root = make_project(self.base / "scoped", active_openspec=True)
         env = _isolated_env(root, self.base)
         proc = subprocess.run(
@@ -840,7 +848,7 @@ class HookModeTests(unittest.TestCase):
                               "tool_input": {"file_path": str(root / "src" / "b.ts")}}),
             capture_output=True, text=True, env=env, cwd=str(root),
         )
-        _warned(self, proc, "[warn-scope]")
+        _blocked(self, proc, "[scope] blocked: editing src/b.ts")
         recs = read_signals(root)
         violations = [r for r in recs if r["kind"] == "violation"]
         decisions = [r for r in recs if r["kind"] == "decision"]
@@ -853,7 +861,7 @@ class HookModeTests(unittest.TestCase):
         self.assertEqual(decisions[0]["rule"], "scope")
         self.assertEqual(decisions[0]["origin"], "hook")
         self.assertEqual(decisions[0]["evidence"], {
-            "action": "warned", "tool_use_id": "t1", "hook": "warn-scope.py", "path": "src/b.ts",
+            "action": "blocked", "tool_use_id": "t1", "hook": "warn-scope.py", "path": "src/b.ts",
         })
 
     def test_warn_scope_scope_set_keeps_dotfile_directories(self) -> None:
@@ -1681,7 +1689,7 @@ class WarnHookWithoutGuardTests(unittest.TestCase):
             capture_output=True, text=True, env=_isolated_env(root, base), cwd=str(root),
         )
 
-    def test_every_warn_hook_warns_without_guard_module(self) -> None:
+    def test_every_rule_hook_speaks_without_guard_module(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             root = make_project(base / "noguard", active_openspec=True)
@@ -1696,7 +1704,7 @@ class WarnHookWithoutGuardTests(unittest.TestCase):
             proc = self._run(root, base, "warn-scope.py", {
                 "tool_name": "Edit", "session_id": "ng2", "tool_use_id": "n2",
                 "tool_input": {"file_path": src("b.ts")}})
-            _warned(self, proc, "[warn-scope]")
+            _blocked(self, proc, "[scope] blocked:")
 
             self._run(root, base, "defect-warn.py", {
                 "tool_name": "Edit", "session_id": "ng3", "tool_use_id": "n3a",
@@ -1729,7 +1737,7 @@ class WarnHookWithoutGuardTests(unittest.TestCase):
 
 
 class WarnScopePrecisionTests(unittest.TestCase):
-    """warn-scope warns only where a scope applies, and once per path per session."""
+    """warn-scope blocks only where a scope applies, and on every out-of-scope edit."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -1764,12 +1772,12 @@ class WarnScopePrecisionTests(unittest.TestCase):
 
     def test_relative_path_resolved_against_cwd(self) -> None:
         self._silent(self._run("src/a.ts", tool_use_id="r1"))
-        _warned(self, self._run("src/b.ts", tool_use_id="r2"), "[warn-scope] editing src/b.ts")
+        _blocked(self, self._run("src/b.ts", tool_use_id="r2"), "[scope] blocked: editing src/b.ts")
 
     def test_directory_token_covers_files_under_it(self) -> None:
         self.tasks.write_text("- [ ] rework `src/feature/`\n", encoding="utf-8")
         self._silent(self._run(str(self.root / "src" / "feature" / "deep" / "x.ts"), tool_use_id="d1"))
-        _warned(self, self._run(str(self.root / "src" / "other.ts"), tool_use_id="d2"), "[warn-scope]")
+        _blocked(self, self._run(str(self.root / "src" / "other.ts"), tool_use_id="d2"), "[scope] blocked:")
 
     def test_active_change_is_newest_tasks_md(self) -> None:
         newer = self.root / "openspec" / "changes" / "2026-08-01-older-name"
@@ -1781,22 +1789,27 @@ class WarnScopePrecisionTests(unittest.TestCase):
         (self.tasks.parent / "notes").mkdir()
         self._silent(self._run(str(self.root / "src" / "b.ts")))
 
-    def test_warns_once_per_path_then_suppressed(self) -> None:
+    def test_blocks_every_time_until_tasks_md_names_the_path(self) -> None:
+        """A blocked edit did not happen, so a retry is blocked again (no
+        suppression); once tasks.md names the path, the edit goes through."""
         target = str(self.root / "src" / "b.ts")
-        _warned(self, self._run(target, tool_use_id="w1"), "[warn-scope]")
-        self._silent(self._run(target, tool_use_id="w2"))
-        _warned(self, self._run(str(self.root / "src" / "c.ts"), tool_use_id="w3"), "[warn-scope]")
-        _warned(self, self._run(target, sid="sp2", tool_use_id="w4"), "[warn-scope]")
+        _blocked(self, self._run(target, tool_use_id="w1"), "[scope] blocked:")
+        _blocked(self, self._run(target, tool_use_id="w2"), "[scope] blocked:")
+        _blocked(self, self._run(str(self.root / "src" / "c.ts"), tool_use_id="w3"), "[scope] blocked:")
+        _blocked(self, self._run(target, sid="sp2", tool_use_id="w4"), "[scope] blocked:")
         recs = read_signals(self.root)
         violations = [r for r in recs if r["kind"] == "violation"]
         actions = [(r["evidence"]["tool_use_id"], r["evidence"]["action"])
                    for r in recs if r["kind"] == "decision"]
-        self.assertEqual(len(violations), 3)
-        self.assertEqual(actions, [("w1", "warned"), ("w2", "suppressed"), ("w3", "warned"), ("w4", "warned")])
+        self.assertEqual(len(violations), 4)
+        self.assertEqual(actions, [("w1", "blocked"), ("w2", "blocked"), ("w3", "blocked"), ("w4", "blocked")])
+
+        self.tasks.write_text("- [ ] edit `src/a.ts` and `src/b.ts`\n", encoding="utf-8")
+        self._silent(self._run(target, tool_use_id="w5"))
 
     def test_notebook_edit_is_checked(self) -> None:
         proc = self._run(str(self.root / "nb" / "x.ipynb"), tool="NotebookEdit", key="notebook_path")
-        _warned(self, proc, "[warn-scope] editing nb/x.ipynb")
+        _blocked(self, proc, "[scope] blocked: editing nb/x.ipynb")
 
     def test_session_in_a_subdirectory_checks_the_whole_project(self) -> None:
         """The root is CLAUDE_PROJECT_DIR, not the session cwd: a session started
@@ -1810,7 +1823,7 @@ class WarnScopePrecisionTests(unittest.TestCase):
                               "tool_input": {"file_path": str(self.root / "packages" / "core" / "x.ts")}}),
             capture_output=True, text=True, env=_isolated_env(self.root, self.base), cwd=str(sub),
         )
-        _warned(self, proc, "[warn-scope] editing packages/core/x.ts")
+        _blocked(self, proc, "[scope] blocked: editing packages/core/x.ts")
 
 
 class WarnHooksNeverUseStderrTests(unittest.TestCase):
@@ -1819,7 +1832,8 @@ class WarnHooksNeverUseStderrTests(unittest.TestCase):
     HOOKS = Path(__file__).resolve().parents[3] / ".claude" / "hooks"
 
     def test_sources(self) -> None:
-        for name in ("warn-scope.py", "openspec-gate-warn.py", "no-new-deps-warn.py", "defect-warn.py"):
+        # warn-scope.py blocks since retro-2 (exit 2, reason on stderr), so it is not listed.
+        for name in ("openspec-gate-warn.py", "no-new-deps-warn.py", "defect-warn.py"):
             with self.subTest(hook=name):
                 src = (self.HOOKS / name).read_text(encoding="utf-8")
                 self.assertNotIn("file=sys.stderr", src)

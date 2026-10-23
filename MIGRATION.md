@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-10-23: warn-scope blocks out-of-scope edits (plugin 1.8.10, retro-2)
+
+- **`warn-scope.py` now blocks** an Edit/Write/MultiEdit/NotebookEdit on a project file that the active OpenSpec's `tasks.md` does not name (exit 2; the reason goes to the model). Add the path, or its folder with a trailing `/`, to `tasks.md` and retry. It stays silent with no active OpenSpec, a `tasks.md` with no paths, edits outside the project, and anything under `openspec/`. There is no once-per-session pass any more: a blocked edit did not happen, so every retry is checked again.
+- Why: coograph's retro-2 found most scope warnings ignored. The evidence comes from coograph sessions; if the block gets in the way of your workflow, keep your own copy (sync keeps a locally edited hook, see the 1.8.2 entry below) or tell us.
+- **Your `.github/retro/rules.json` still says `scope: hook-warn`.** Sync never rewrites an existing rule. Set `"enforcement": "hook-block"` and `"outcomes_since": "<today>"` on the `scope` rule by hand, so Retro measures the block from now on. New projects get this from the seed.
+- **Update the installed plugin too** (marketplace Update to 1.8.10), so the plugin's own `warn-scope.py` matches the project's.
+
+---
+
 ## 2026-10-23: gitignored and generated files stay out of the code graph (plugin 1.8.9)
 
 - **Gitignored paths are not indexed.** The builder asks git (`git ls-files -o -i --exclude-standard --directory`) once per repo it finds under the root, so a multi-repo workspace whose root is not a repo works too. This follows `git status`: `.gitignore`, `.git/info/exclude` and your global excludes all count, so local scripts you hid through `info/exclude` are skipped as well. Tracked files are always indexed. Without `git` on PATH, nothing changes and the build logs one warning.

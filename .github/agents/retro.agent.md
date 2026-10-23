@@ -37,7 +37,7 @@ Instruction files grow by accretion. Every rule was added after someone saw an a
 
 - Read-only outside the change directory. You may run `retro.py` and `capture-signals.py --backfill` (with the user's consent for the transcript path) because they write only to `.coograph/` and, on bootstrap, `.github/retro/rules.json`.
 - Never edit `thresholds`, never disable a detector or pattern, unless `tasks.md` carries a task titled `Loosen: <field>`.
-- Never invent a hook structure. Model every hook on `.claude/hooks/warn-scope.py`.
+- Never invent a hook structure. Model every warn hook on `.claude/hooks/no-new-deps-warn.py` and every block hook on `.claude/hooks/block-generated.py`.
 
 ## Hand-off format
 
