@@ -14,6 +14,8 @@
 
 If the user types `/coograph-init`, `$coograph-init`, or asks to "initialize the project" / "set up coograph" / "wire up coograph in this repo", follow `.github/skills/coograph-init/SKILL.md` exactly. That single procedure is the source of truth across every tool.
 
+If the user types `/coograph-doctor`, `$coograph-doctor`, or asks to "check the install" / "run the doctor", follow `.github/skills/coograph-doctor/SKILL.md`: a read-only health check that offers each fix before applying it.
+
 Note for Codex CLI: `/` is reserved for built-in commands. The Codex skill at `.agents/skills/coograph-init/SKILL.md` auto-triggers from description match, or invoke explicitly with `$coograph-init`.
 
 ## Hard rules

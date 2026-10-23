@@ -43,11 +43,16 @@ The full procedure is in `.github/skills/coograph-init/SKILL.md`. Follow those s
 
 9. **Code-graph health check** (if code-graph enabled) — Sanity-check node/edge/file counts in `.code-graph/graph.db`, report healthy or list issues, and offer a rebuild. See SKILL.md § Step 9.
 
+10. **Retro first run, layout checks** (if enabled) — SKILL.md § Steps 10 and 11.
+
+11. **Doctor** — run `python3 .github/skills/coograph-doctor/doctor.py --project <target>` last; every check PASS or SKIP (WARN only for a declined option). See SKILL.md § Step 12.
+
 ## Guardrails
 
 - Never guess at commands — if you can't detect them, ask.
 - Never invent project structure — read the actual filesystem.
 - Initialization is complete only when there are zero `_TBD_` and `<!-- FILL` markers in copied instruction files.
 - If code-graph is enabled, initialization is complete only when `.code-graph/graph.db` exists, at least one MCP config has been written, and the Step 9 health check has run.
+- Initialization is complete only when the final doctor run shows no FAIL, or every FAIL left is named to the user.
 
 $ARGUMENTS

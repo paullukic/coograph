@@ -12,6 +12,8 @@ This project ships with the Coograph AI coding template.
 
 If the user types `/coograph-init` (or asks to "initialize the project", "set up coograph"), follow `.github/skills/coograph-init/SKILL.md` exactly.
 
+If the user types `/coograph-doctor` (or asks to "check the install", "run the doctor"), follow `.github/skills/coograph-doctor/SKILL.md` exactly. It runs a read-only check of the graph, MCP configs, placeholders, tool files and hooks, and offers each fix before applying it.
+
 If the user types `/coograph-retro` (or asks to "run a retro", "check the guardrails"), follow `.github/skills/coograph-retro/SKILL.md` exactly. It measures rule violations and session cost from signals captured in Claude Code sessions and proposes instruction and hook edits as an OpenSpec. It never applies. This tool does not capture signals itself; the skill still runs the analyzer and, when nothing was captured, says so.
 
 If the user types `/coograph-docs-restructure` (or asks to "restructure the docs", "shrink the instruction files"), follow `.github/skills/coograph-docs-restructure/SKILL.md` exactly. It proposes an OpenSpec first and migrates only after approval.

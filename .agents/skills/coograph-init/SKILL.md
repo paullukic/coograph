@@ -17,4 +17,4 @@ Substitutions for Codex CLI:
 | `read_file` | Use `view` |
 | `grep_search` | Use `grep` / `rg` via shell |
 
-Run through every step (1–9) including the code-graph health check at the end. Initialization is complete only when zero `_TBD_` and zero `<!-- FILL` markers remain in copied instruction files.
+Run through every step in SKILL.md, through the doctor run at the end (Step 12). Initialization is complete only when zero `_TBD_` and zero `<!-- FILL` markers remain in copied instruction files.

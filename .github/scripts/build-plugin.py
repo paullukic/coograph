@@ -29,7 +29,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 PLUGIN_NAME = "coograph"
-VERSION = "1.8.8"  # bump on every release so marketplace Update picks it up
+VERSION = "1.8.12"  # bump on every release so marketplace Update picks it up
 DESCRIPTION = (
     "Graph-first AI coding workflow: Plan, Propose, Apply, Review, Archive with "
     "OpenSpec gates, evidence-based agents, and guardrail hooks."
@@ -86,7 +86,7 @@ TEMPLATE_PATHS = [
     ".claude/commands",
     ".claude/hooks",
     ".claude/settings.json",
-    ".agents/skills/coograph-init",
+    ".agents/skills",
     ".opencode/commands",
     "templates",
     "openspec/config.yaml",
