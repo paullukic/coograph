@@ -47,7 +47,7 @@ Trigger the initializer in your AI tool's chat. Each tool has its own invocation
 | **Claude Code** | `/coograph-init` | `.claude/commands/coograph-init.md` |
 | **VS Code Copilot** | `/coograph-init` | `.github/skills/coograph-init/` skill folder |
 | **Codex CLI** | `$coograph-init` (explicit skill) **or** "initialize the project" (auto-trigger) — see [Codex CLI Notes](#codex-cli-notes) | `.agents/skills/coograph-init/SKILL.md` (Codex scans repo root). Codex reserves `/` for built-ins, so custom workflows use `$name` |
-| **OpenCode** | `/coograph-init` | `.opencode/commands/coograph-*.md` (all four) + `opencode.json` (when code-graph is enabled — registers the code-graph MCP server and the skills paths; OpenCode reads neither `.mcp.json` nor `.github/skills/` on its own) |
+| **OpenCode** | `/coograph-init` | `.opencode/commands/coograph-*.md` (every command file) + `opencode.json` (when code-graph is enabled — registers the code-graph MCP server and the skills paths; OpenCode reads neither `.mcp.json` nor `.github/skills/` on its own) |
 | **Cursor** | `/coograph-init` (string match — no autocomplete) | `.cursor/rules/coograph.mdc` § Invocation |
 | **Devin Desktop** | `/coograph-init` (string match) | `.windsurfrules` § Invocation. Renamed from Windsurf on 2026-06-02; the legacy file at the workspace root is [still read](https://docs.devin.ai/desktop/devin-desktop-faq), though `.devin/rules/` now takes precedence |
 | **Aider** | `/coograph-init` (string match) | `CONVENTIONS.md` § Invocation |
@@ -56,6 +56,8 @@ Trigger the initializer in your AI tool's chat. Each tool has its own invocation
 Natural-language paraphrases ("initialize the project", "set up coograph", "wire up coograph in this repo") work in **every** tool — each config file lists those triggers alongside the slash form, and Codex CLI's skill auto-activates from the description match.
 
 The initializer prompts which tools to set up (multi-select), detects your stack, fills all `_TBD_` placeholders, and optionally sets up the code-graph. About 2 minutes.
+
+**Check the install** any time with `/coograph-doctor` (`$coograph-doctor` in Codex CLI, or "check the install"), wired the same way as init in every tool above. It runs a read-only script (`.github/skills/coograph-doctor/doctor.py`) that prints PASS / WARN / FAIL / SKIP for the code graph and its age, the code-graph server and MCP configs, leftover placeholders, each tool's files, git and Claude Code hooks, `openspec/config.yaml`, and template updates sync parked because you edited the file. It then offers each fix and waits for a yes. Init runs it as its last step.
 
 Manual setup: see [SETUP.md](SETUP.md). Prerequisites and visualizer: see [.github/code-graph/README.md](.github/code-graph/README.md).
 

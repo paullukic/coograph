@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-10-23: `/coograph-doctor`, an install health check (plugin 1.8.12)
+
+- **New skill `/coograph-doctor`** (`$coograph-doctor` in Codex CLI, "check the install" anywhere). A read-only script, `.github/skills/coograph-doctor/doctor.py`, prints PASS / WARN / FAIL / SKIP for:
+  - the code graph and its age;
+  - the code-graph server and `uv`, and every MCP config's paths;
+  - leftover `_TBD_` / `<!-- FILL` markers;
+  - each tool's files against `projects.json`;
+  - the graph git hooks and the hooks `.claude/settings.json` wires;
+  - `openspec/config.yaml`;
+  - template files sync parked in `.coograph/upstream/` because you had edited them.
+  
+  The skill then offers each fix and waits for a yes. Run it directly with `python3 .github/skills/coograph-doctor/doctor.py`; from a coograph checkout, add `--project <path>` and it compares against `projects.json`.
+- **Delivered automatically** to registered projects through `.github/skills/` and `.claude/commands/` on the next `git pull` of coograph, and to the plugin on Update. **Codex, Cursor, Devin Desktop, Aider and Cline files are not synced:** re-run `/coograph-init` there to get the `$coograph-doctor` skill (`.agents/skills/coograph-doctor/`) and the Invocation line in your rules file.
+- **Init runs the doctor as its last step (Step 12).** Step 8 now names the `projects.json` tool ids: `claude`, `vscode`, `codex`, `opencode`, `cursor`, `devin` (`windsurf` still accepted), `aider`, `cline`.
+- **The plugin ships every `.agents/skills/` folder**, not only `coograph-init`.
+- Measured on the 10 registered projects on this machine: no FAIL. 9 WARNs, all real:
+  - 3 Claude Code projects carry stale `.github/agents/` that sync no longer refreshes, because `vscode` is not registered for them;
+  - 2 projects have no graph git hooks;
+  - 4 projects have upstream copies waiting (19 files in two of them).
+
+---
+
 ## 2026-10-23: JS/TS and Kotlin call edges; minified files skipped (plugin 1.8.8)
 
 - **JS/TS arrow functions are nodes.** `const f = () => {}`, `const f = function () {}` and class-field arrows now appear as functions and methods. Arrows nested inside another function stay part of it.

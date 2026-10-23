@@ -39,6 +39,20 @@ jobs:
       - name: Check plugin/ and marketplace.json are not stale
         run: python .github/scripts/build-plugin.py --check
 
+  doctor-tests:
+    name: coograph-doctor unit tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Run tests
+        run: python -m unittest discover -s .github/skills/coograph-doctor/tests -v
+
   retro-tests:
     name: retro unit tests
     runs-on: ${{ matrix.os }}

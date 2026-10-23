@@ -144,11 +144,13 @@ There is no single command that works everywhere — each tool registers custom 
 | **Claude Code** | `/coograph-init` | `.claude/commands/coograph-init.md` |
 | **VS Code Copilot** | `/coograph-init` | `.github/skills/coograph-init/SKILL.md` |
 | **Codex CLI** | `$coograph-init` **or** "initialize the project" | `.agents/skills/coograph-init/SKILL.md` |
-| **OpenCode** | `/coograph-init` | `.opencode/commands/coograph-*.md` (all four) + `opencode.json` in the project root when code-graph is enabled |
+| **OpenCode** | `/coograph-init` | `.opencode/commands/coograph-*.md` (every command file) + `opencode.json` in the project root when code-graph is enabled |
 | **Cursor** | `/coograph-init` (string match — no menu) | `.cursor/rules/coograph.mdc` § Invocation |
 | **Devin Desktop** | `/coograph-init` (string match) | `.windsurfrules` § Invocation |
 | **Aider** | `/coograph-init` (string match) | `CONVENTIONS.md` § Invocation |
 | **Cline** | `/coograph-init` (string match) | `.clinerules` § Invocation |
+
+**Health check:** `/coograph-doctor` (`$coograph-doctor` in Codex CLI) uses the same files and the same pattern per tool: `.claude/commands/coograph-doctor.md`, `.github/skills/coograph-doctor/`, `.agents/skills/coograph-doctor/SKILL.md`, `.opencode/commands/coograph-doctor.md`, and an Invocation line in each rules file. Without an agent, run `python3 .github/skills/coograph-doctor/doctor.py` in the project.
 
 **Codex CLI quirk:** Codex reserves `/` for ~30 built-in commands (`/model`, `/permissions`, `/diff`, etc.) — there is no project-level custom slash registration. Custom skills are invoked with `$skill-name` (explicit) or auto-trigger when the user's request matches the skill's description. Verify the skill loaded with `/skills`.
 
