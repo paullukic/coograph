@@ -30,7 +30,7 @@ Ask the user these questions one at a time (wait for each answer before proceedi
 2. **Which AI tools should I set up for?** (multi-select — accept any combination)
    - **Claude Code**: `CLAUDE.md` + `AGENTS.md`, `.claude/commands/`, `.claude/hooks/`, `.claude/settings.json`
    - **VS Code Copilot** — `.github/agents/`, `.github/skills/`, `AGENTS.md`
-   - **Codex CLI** — `.agents/skills/coograph-init/SKILL.md` + `AGENTS.md` (Codex scans `.agents/skills/` from repo root for native slash)
+   - **Codex CLI** — `.agents/skills/coograph-init/SKILL.md`, `.agents/skills/coograph-doctor/SKILL.md` + `AGENTS.md` (Codex scans `.agents/skills/` from repo root for native slash)
    - **OpenCode** (sst/opencode) — `.opencode/commands/coograph-*.md` + `AGENTS.md` + `opencode.json` (native `/coograph-init` slash; `opencode.json` carries the skills pointer and, when question 5 is `yes`, the code-graph MCP entry — OpenCode's equivalent of `.mcp.json`)
    - **Cursor** — `.cursor/rules/coograph.mdc` (from `templates/cursor/`)
    - **Devin Desktop** — `.windsurfrules` (from `templates/windsurf/`)
@@ -80,7 +80,7 @@ template" signal — reuse the same invariant Steps 4, 5 and the Guardrails key 
 
 **Classify into one state:**
 - **State A — fresh**: none of the expected coograph files exist.
-  → Full init flow, unchanged. Proceed normally through Steps 2–10.
+  → Full init flow, unchanged. Proceed normally through Steps 2–12.
 - **State B — partial**: some expected files exist, some are missing.
   → Copy ONLY the missing files (Step 3). Do not modify any existing file unless the
     user explicitly confirms overwrite for that specific file.
@@ -155,7 +155,7 @@ Copy files from the template root (see Template source) to the target project. O
 **Always copy (shared conventions used by every tool):**
 - `.github/copilot-instructions.md` (CLAUDE.md pre-flight + on-demand reads depend on this)
 - `.github/instructions/` (all instruction `.md` files — testing, styling, brutal-honesty)
-- `.github/skills/` (all skill directories — every supported tool delegates here, including the Claude Code command wrappers in `.claude/commands/` and the multi-tool slash registrations under `templates/`)
+- `.github/skills/` (all skill directories, never a `tests/` or `__pycache__/` folder inside one — every supported tool delegates here, including the Claude Code command wrappers in `.claude/commands/` and the multi-tool slash registrations under `templates/`)
 - `openspec/config.yaml` (create `openspec/` dir if needed)
 - `.github/layout/` (`layout.py`, `layout.seed.json`, `README.md`, `coograph-layout.yml`, `pre-commit`; never `tests/`, never `layout.json`). Then create the project's config: `cd <target> && python3 .github/layout/layout.py --merge-seed` (creates `layout.json` from the seed, or adds new keys to an existing one without touching its values). Never copy `layout.json` from the template root; it is the coograph repo's own. For a monorepo (workspaces in `package.json`, `pnpm-workspace.yaml`, `go.work`, `Cargo.toml`), set `routers` in the new `layout.json` to one `<workspace>/AGENTS.md` per workspace; for a single package set it to `[]`.
 - `GOTCHAS.md` (format header, no entries), only when the target has none. Never overwrite an existing `GOTCHAS.md`: it is project knowledge.
@@ -164,7 +164,7 @@ Copy files from the template root (see Template source) to the target project. O
 **For Claude Code:**
 - `CLAUDE.md`
 - `AGENTS.md` (`CLAUDE.md` imports it with `@AGENTS.md`: the hard rules, workflow and routing live there. Without it Claude Code skips the import silently and every hard rule is gone. Same file as VS Code Copilot, Codex CLI and OpenCode: copy once)
-- `.claude/commands/coograph-*.md` (every Coograph slash command: `/coograph-init` itself, so the project can re-init others, plus `/coograph-new-ticket`, `/coograph-plan`, `/coograph-review`, `/coograph-ultra-review`, `/coograph-verify`, `/coograph-debug`, `/coograph-search`, `/coograph-retro`, which the copied `CLAUDE.md` references)
+- `.claude/commands/coograph-*.md` (every Coograph slash command: `/coograph-init` itself, so the project can re-init others, plus `/coograph-doctor`, `/coograph-new-ticket`, `/coograph-plan`, `/coograph-review`, `/coograph-ultra-review`, `/coograph-verify`, `/coograph-debug`, `/coograph-search`, `/coograph-retro`, which the copied `CLAUDE.md` references)
 - `.claude/hooks/` (all hook scripts: block-generated, log-bash, report-graph, warn-scope, capture-signals, the rule warn hooks, gotcha-surface, plus the shared `_coograph_guard.py` module and the `_coograph_signals.py` shim that loads `.github/retro/_coograph_signals.py`)
 - `.claude/settings.json` (wires the hooks into Claude Code lifecycle events)
 - Do NOT copy `.claude/settings.local.json` — that's per-machine personal overrides
@@ -175,16 +175,16 @@ Copy files from the template root (see Template source) to the target project. O
 - (`.github/skills/` is in the always-copy block above — VS Code Copilot consumes it but does not need a tool-specific copy directive)
 
 **For Codex CLI:**
-- `.agents/skills/coograph-init/SKILL.md` (Codex scans `.agents/skills/` from repo root and surfaces it as the `/coograph-init` slash)
+- `.agents/skills/coograph-*/SKILL.md` (`coograph-init` and `coograph-doctor`; Codex scans `.agents/skills/` from repo root and surfaces them as `$coograph-init` / `$coograph-doctor`)
 - `AGENTS.md` (auto-read by Codex CLI; same file as VS Code Copilot — copy once)
-- (delegates to `.github/skills/coograph-init/` — already supplied by the always-copy block)
+- (delegates to `.github/skills/coograph-init/` and `.github/skills/coograph-doctor/` — already supplied by the always-copy block)
 
 **For OpenCode:**
-- `.opencode/commands/coograph-*.md` (all four command files — `coograph-init`, `coograph-retro`, `coograph-suggest-multi-models`, `coograph-disable-multi-models`; note the plural `commands/`)
+- `.opencode/commands/coograph-*.md` (every command file: `coograph-init`, `coograph-doctor`, `coograph-retro`, `coograph-docs-restructure`, `coograph-suggest-multi-models`, `coograph-disable-multi-models`; note the plural `commands/`)
 - `.opencode/plugin/log-bash.ts` → target project's `.opencode/plugin/` (bash audit plugin — OpenCode auto-loads `plugin/*.ts` at session start)
 - `AGENTS.md` (auto-read by OpenCode; same file as VS Code Copilot — copy once)
 - `opencode.json` at the workspace root, when code-graph was enabled (question 5) — written per Step 6e; this file alone registers the code-graph MCP server and the `.github/skills/` paths (OpenCode reads neither `.mcp.json` nor `.github/skills/` on its own)
-- (delegates to `.github/skills/coograph-init/` — already supplied by the always-copy block)
+- (delegates to `.github/skills/coograph-init/` and `.github/skills/coograph-doctor/` — already supplied by the always-copy block)
 
 **For Cursor:**
 - `templates/cursor/.cursor/` → target project's `.cursor/` (preserves rules subdirectory structure)
@@ -531,7 +531,7 @@ Register the target project so future `git pull` updates in coograph auto-propag
      "registered_at": "YYYY-MM-DD"
    }
    ```
-   Set `tools` to match what was selected in Step 1, `code_graph` to match Step 1 question 5, and `registered_at` to today's date.
+   Set `tools` to match what was selected in Step 1, using these ids: `claude` (Claude Code), `vscode` (VS Code Copilot), `codex` (Codex CLI), `opencode` (OpenCode), `cursor` (Cursor), `devin` (Devin Desktop; older entries say `windsurf`, which means the same), `aider` (Aider), `cline` (Cline). Set `code_graph` to match Step 1 question 5, and `registered_at` to today's date. `/coograph-doctor` compares these ids against the files on disk.
 3. Write the updated `projects.json` back.
 4. Run `./setup.sh` in the coograph root to ensure git hooks are configured for auto-sync:
    ```bash
@@ -660,6 +660,16 @@ Run this step only if Step 1 question 8 is not `no`.
 2. **CI** (`CI + pre-commit` or `CI only`): copy `.github/layout/coograph-layout.yml` to `<target>/.github/workflows/coograph-layout.yml`. Do not overwrite an existing file of that name without asking. `sync.py` refreshes it later only while its first line carries `coograph:managed`; tell the user to delete that line if they edit the workflow.
 3. **Pre-commit** (`CI + pre-commit` or `pre-commit only`): find the git dir (`git -C <target> rev-parse --git-dir`). If `<git-dir>/hooks/pre-commit` does not exist, copy `.github/layout/pre-commit` there and `chmod +x` it. If one exists, do not replace it: add the line `"$(git rev-parse --show-toplevel)/.github/layout/pre-commit" || exit 1` once, at the end, or just before the last line when that line starts with `exec` (nothing after an `exec` runs), and tell the user. Local only, like the code-graph hooks: each developer installs it once.
 
+## Step 12: Doctor
+
+Run the install check last, on the target:
+
+```bash
+python3 <template-root>/.github/skills/coograph-doctor/doctor.py --project <target>
+```
+
+From a coograph checkout (repo mode) this also compares the target against its new `projects.json` entry. Show the output. Every check should be PASS or SKIP; a WARN is expected only for an option the user declined (for example `hooks:git` when they said no to git hooks in Step 6h). Fix any FAIL before calling initialization done, or name it to the user as open. The procedure for later checks is `/coograph-doctor`.
+
 ## Guardrails
 
 - Never guess at commands — if you can't detect them, ask.
@@ -671,3 +681,4 @@ Run this step only if Step 1 question 8 is not `no`.
 - If code-graph setup is enabled, initialization is complete only when `.code-graph/graph.db` exists in the target project, at least one MCP config file has been written, AND Step 9 health check has run (either reporting healthy or finishing the user-chosen fix path).
 - If Retro is enabled, initialization is complete only when `retro.py --validate` passed and Step 10c printed a report opener.
 - Initialization is complete only when `.github/layout/layout.json` exists and `layout.py --budget` ran (its result reported, pass or fail).
+- Initialization is complete only when the Step 12 doctor run shows no FAIL, or every FAIL left is named to the user.

@@ -15,6 +15,6 @@ Substitutions for OpenCode:
 | `read_file` | Use `read` tool |
 | `grep_search` | Use `grep` tool |
 
-Run through every step (1–10) including the code-graph health check and the Retro first run at the end. Initialization complete only when zero `_TBD_` and zero `<!-- FILL` markers remain in copied instruction files.
+Run through every step in SKILL.md, through the doctor run at the end (Step 12). Initialization complete only when zero `_TBD_` and zero `<!-- FILL` markers remain in copied instruction files.
 
 $ARGUMENTS
