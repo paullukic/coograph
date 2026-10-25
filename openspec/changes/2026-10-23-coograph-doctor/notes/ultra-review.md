@@ -34,3 +34,13 @@
 ### Follow-up, not fixed here (pre-existing init text)
 
 - `.github/skills/coograph-init/SKILL.md` Step 6e pip fallback writes `${workspaceFolder}` into every config, including `.mcp.json` and `opencode.json`, which pass it on literally; the doctor FAILs that config and its re-init fix writes it again. The OpenCode pip variant also passes `requirements.txt` as a python argument. Fix: project-relative paths outside VS Code, drop requirements.txt from the OpenCode python args. Separate change.
+
+## Round 3: delta, 2426fbc (2026-10-25)
+
+4 agents, 0.2M tokens, 2 min. Verdict APPROVE: previous 11-13 fixed, no new findings.
+
+Open, non-blocking:
+- Nit: the mcp "cannot verify" WARN text says the variable "is not set where the doctor runs", which misleads for `${input:x}` / `{file:x}` (not env variables). Word it neutrally.
+- Missing tests the reviewer listed: foreign hook with no shebang, `${workspaceFolderBasename}` through check_mcp, deleted file in a subfolder project, a sh hook ending in exit, shebang edge cases.
+
+Next per the skill: one `full` run with `pr: N` once the PR exists, then the human review.
