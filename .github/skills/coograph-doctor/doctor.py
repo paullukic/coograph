@@ -17,6 +17,7 @@ Exit 0 with no FAIL, 1 with any FAIL, 2 on a usage error.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -33,7 +34,6 @@ try:
 except ImportError:  # pragma: no cover - depends on the machine
     yaml = None
 
-GRAPH_AGE_TOLERANCE = 3600   # seconds a graph may lag the last commit
 NO_CALLS_FUNCTIONS = 50      # this many functions and 0 calls: no tree-sitter
 GIT_TIMEOUT = 10
 # Folders the graph builder never walks (.github/code-graph/builder.py
@@ -42,6 +42,10 @@ BUILDER_SKIPS_DIRS = frozenset({
     "node_modules", "venv", "env", "__pycache__", "target", "dist", "build",
     "coverage", "out", "vendor", "tmp", "log", "Pods", "DerivedData",
 })
+# builder.py _is_minified: scripts it leaves out of the graph
+MINIFIABLE_EXTS = frozenset({".js", ".mjs", ".cjs"})
+MINIFIED_AVG_LINE = 300
+MINIFIED_SAMPLE = 64 * 1024
 
 # Tool ids as `projects.json` records them (coograph-init Step 8).
 TOOL_ALIASES = {"windsurf": "devin"}
@@ -74,10 +78,23 @@ CLAUDE_HOOK_RE = re.compile(
     r"\$\{?CLAUDE_PROJECT_DIR\}?[/\\]+\.claude[/\\]+hooks[/\\]+([\w.-]+)")
 # Tools that expand `${workspaceFolder}` in their MCP config; others pass it on literally.
 EXPANDS_WORKSPACE = frozenset({"vscode", "cursor"})
-BUILD_CMD = ("uv run -p \">=3.10\" --with-requirements .github/code-graph/requirements.txt "
-             ".github/code-graph/server.py --build")
+# Configs these tools read as JSONC: comments and trailing commas are fine.
+JSONC_TOOLS = frozenset({"vscode", "cursor", "opencode"})
+# Variables each tool expands in its MCP config, other than the workspace folder.
+ENV_VAR_RE = {
+    "claude": re.compile(r"\$\{(\w+)(?::-([^}]*))?\}"),   # ${VAR}, ${VAR:-default}
+    "vscode": re.compile(r"\$\{env:(\w+)\}"),
+    "cursor": re.compile(r"\$\{env:(\w+)\}"),
+    "opencode": re.compile(r"\{env:(\w+)\}"),
+}
+WORKSPACE_VARS = ("${workspaceFolder}", "${workspaceRoot}")
+_CMD = "uv run -p \">=3.10\" --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py"
+BUILD_CMD = _CMD + " --build"
+UPDATE_CMD = _CMD + " --update"
 REBUILD = "run /coograph-rebuild-graph, or: " + BUILD_CMD
-REINIT = "re-run /coograph-init for this project: it copies only what is missing"
+REINIT = ("re-run /coograph-init for this project: it adds what is missing, and also offers to "
+          "refresh template-managed files that differ from the template (skills, agents, "
+          ".claude/hooks/, .claude/settings.json), so name the ones to keep")
 
 
 @dataclass
@@ -255,16 +272,25 @@ def _repos(project: Path) -> list[tuple[Path, str]]:
         return []
 
 
-def _indexed_files(db: Path) -> set[str]:
+def _stored_hashes(db: Path) -> dict[str, str] | None:
+    """{file: sha1} the builder recorded (file_hashes), None when unreadable."""
     try:
         conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)
         try:
-            return {f.replace("\\", "/") for (f,) in
-                    conn.execute("SELECT file FROM nodes WHERE kind='file'")}
+            return {f.replace("\\", "/"): h for (f, h) in
+                    conn.execute("SELECT file, sha1 FROM file_hashes")}
         finally:
             conn.close()
     except sqlite3.Error:
-        return set()
+        return None
+
+
+def _sha1(path: Path) -> str | None:
+    """The hash builder.py _sha1_file stores, or None for an unreadable file."""
+    try:
+        return hashlib.sha1(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def _builder_walks(rel: str) -> bool:
@@ -276,10 +302,30 @@ def _builder_walks(rel: str) -> bool:
     return "bootstrap/cache/" not in rel
 
 
+def _minified(path: Path) -> bool:
+    """builder.py _is_minified: a script the builder leaves out of the graph."""
+    if path.suffix.lower() not in MINIFIABLE_EXTS:
+        return False
+    if ".min." in path.name.lower():
+        return True
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(MINIFIED_SAMPLE)
+    except OSError:
+        return False
+    return len(head) >= 2048 and len(head) / (head.count(b"\n") + 1) > MINIFIED_AVG_LINE
+
+
+def _git_paths(repo: Path, *args: str) -> set[str]:
+    out = _git(repo, "-c", "core.quotepath=off", *args, "-z")
+    return {f for f in (out or "").split("\0") if f}
+
+
 def check_graph_age(ctx: Context) -> Result:
-    """A graph is stale when a commit after its last write touched a file of a
-    kind it indexes. A docs-only commit leaves `--update` nothing to do and the
-    db untouched, so commit time alone would flag healthy installs."""
+    """A graph is stale when the committed content of a file differs from what
+    the graph holds. Compared by content, not dates: a pull brings commits with
+    old dates, and `--update` leaves the db untouched when nothing changed.
+    Uncommitted edits are left out: no git hook could have seen them yet."""
     db = ctx.project / ".code-graph" / "graph.db"
     if not ctx.code_graph:
         return Result("SKIP", "graph-age", "code-graph not enabled")
@@ -288,31 +334,65 @@ def check_graph_age(ctx: Context) -> Result:
     repos = _repos(ctx.project)
     if not repos:
         return Result("SKIP", "graph-age", "not a git repo")
-    built = db.stat().st_mtime
-    files = _indexed_files(db)
-    exts = {Path(f).suffix.lower() for f in files if Path(f).suffix}
-    since = f"--since=@{int(built + GRAPH_AGE_TOLERANCE)}"
+    stored = _stored_hashes(db)
+    if not stored:
+        return Result("WARN", "graph-age", "the graph holds no file hashes to compare with",
+                      "rebuild it, so the builder records them: " + REBUILD)
+    exts = {Path(f).suffix.lower() for f in stored if Path(f).suffix}
     stale: set[str] = set()
-    newest = 0
     for repo, prefix in repos:
-        out = _git(repo, "log", since, "--relative", "--name-only", "--format=%ct", "--", ".")
-        for line in (out or "").splitlines():
-            line = line.strip()
-            if line.isdigit():
-                newest = max(newest, int(line))
-            elif line:
-                rel = prefix + line.replace("\\", "/")
-                # in the graph already, or a new file of an indexed kind the builder walks
-                if rel in files or (Path(rel).suffix.lower() in exts and _builder_walks(rel)):
-                    stale.add(rel)
+        tracked = _git_paths(repo, "ls-files")
+        uncommitted = _git_paths(repo, "diff", "--name-only", "HEAD") | _git_paths(
+            repo, "ls-files", "--others", "--exclude-standard")
+        for rel in tracked - uncommitted:
+            full = prefix + rel
+            path = repo / rel
+            if full in stored:
+                if _sha1(path) != stored[full]:
+                    stale.add(full)
+            elif (Path(rel).suffix.lower() in exts and _builder_walks(full)
+                  and path.is_file() and not _minified(path)):
+                stale.add(full)  # a new file of a kind the graph indexes
+        for full in stored:
+            if full.startswith(prefix) and full[len(prefix):] not in uncommitted \
+                    and not (ctx.project / full).is_file():
+                stale.add(full)  # deleted, still in the graph
     if stale:
         return Result("WARN", "graph-age",
-                      f"{len(stale)} indexed file(s) changed in commits up to "
-                      f"{_ago(newest - built)} after the graph was last written, "
-                      f"e.g. {sorted(stale)[0]}",
-                      "update it now with /coograph-rebuild-graph update, and install the "
-                      "git hooks (see hooks:git) so it follows every commit")
-    return Result("PASS", "graph-age", "no indexed file changed in a commit since the last build")
+                      f"{len(stale)} indexed file(s) differ from the graph, e.g. {sorted(stale)[0]}",
+                      "run /coograph-rebuild-graph update, or: " + UPDATE_CMD + "; and install "
+                      "the git hooks (see hooks:git) so it follows every commit")
+    return Result("PASS", "graph-age", "every committed indexed file matches the graph")
+
+
+def _strip_jsonc(text: str) -> str:
+    """JSONC to JSON: drop // and /* */ comments outside strings, and
+    trailing commas before } or ]."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i:j + 1])
+            i = j + 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        else:
+            if c in "}]":
+                while out and out[-1].isspace():
+                    out.pop()
+                if out and out[-1] == ",":
+                    out.pop()
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def _mcp_entry(ctx: Context, tool: str):
@@ -321,7 +401,8 @@ def _mcp_entry(ctx: Context, tool: str):
     if not path.is_file():
         return rel, None, f"{rel} is missing"
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        text = path.read_text(encoding="utf-8-sig")
+        data = json.loads(_strip_jsonc(text) if tool in JSONC_TOOLS else text)
     except (OSError, ValueError) as e:
         return rel, None, f"{rel} is not valid JSON ({e})"
     entry = (data.get(key) or {}).get("code-graph") if isinstance(data, dict) else None
@@ -344,8 +425,38 @@ def _mcp_command(entry: dict, tool: str) -> tuple[str, list[str]]:
     return str(entry.get("command", "")), [str(a) for a in entry.get("args", [])]
 
 
-def _uses_uv(command: str) -> bool:
-    return Path(command.replace("\\", "/")).name.lower() in ("uv", "uv.exe")
+def _bare_uv(command: str) -> bool:
+    """`uv` by name, found through PATH. A path to uv is checked as a path."""
+    return command.lower() in ("uv", "uv.exe")
+
+
+def _expand(raw: str, tool: str, project: Path) -> tuple[str, list[str], list[str]]:
+    """(raw with the tool's variables expanded, variables the tool passes on
+    literally, variables not set where the doctor runs)."""
+    literal: list[str] = []
+    unknown: list[str] = []
+    out = raw
+    for var in WORKSPACE_VARS:
+        if var in out:
+            if tool in EXPANDS_WORKSPACE:
+                out = out.replace(var, str(project))
+            else:
+                literal.append(var)
+    if tool in EXPANDS_WORKSPACE:
+        out = out.replace("${userHome}", str(Path.home()))
+
+    def env(m: re.Match) -> str:
+        if m.group(0) in WORKSPACE_VARS:
+            return m.group(0)
+        value = os.environ.get(m.group(1))
+        if value is None and m.lastindex and m.lastindex > 1 and m.group(2) is not None:
+            value = m.group(2)
+        if value is None:
+            unknown.append(m.group(0))
+            return m.group(0)
+        return value
+    out = ENV_VAR_RE[tool].sub(env, out)
+    return out, literal, unknown
 
 
 def check_mcp(ctx: Context) -> tuple[list[Result], list[str]]:
@@ -360,6 +471,9 @@ def check_mcp(ctx: Context) -> tuple[list[Result], list[str]]:
         rel, found, problem = _mcp_entry(ctx, tool)
         fix = (f"re-run /coograph-init (Step 6e writes the code-graph entry into {rel} "
                "and keeps every other key)")
+        if "is not valid JSON" in problem:
+            fix = (f"fix the syntax of {rel} by hand: init merges into it and cannot "
+                   "read it either")
         if ctx.template and not (ctx.project / rel).is_file():
             # .opencode/ and .github/agents/ are template sources here, not installs
             results.append(Result("SKIP", check, f"template checkout, no {rel}"))
@@ -371,16 +485,16 @@ def check_mcp(ctx: Context) -> tuple[list[Result], list[str]]:
         command, args = _mcp_command(entry, tool)
         commands.append(command)
         base = ctx.project / str(entry.get("cwd") or ".")
-        missing = []
+        missing, unverified = [], []
         for raw in ([command] if ("/" in command or "\\" in command) else []) + args:
             if not _looks_like_path(raw):
                 continue
-            expanded = raw
-            if tool in EXPANDS_WORKSPACE:
-                expanded = raw.replace("${workspaceFolder}", str(ctx.project)).replace(
-                    "${workspaceRoot}", str(ctx.project))
-            if "${" in expanded:  # this tool passes the variable on literally
+            expanded, literal, unknown = _expand(raw, tool, ctx.project)
+            if literal:
                 missing.append(raw + " (not expanded by this tool)")
+                continue
+            if unknown:
+                unverified.append(raw)
                 continue
             p = Path(expanded)
             if not (p if p.is_absolute() else base / p).exists():
@@ -388,6 +502,13 @@ def check_mcp(ctx: Context) -> tuple[list[Result], list[str]]:
         if missing:
             results.append(Result("FAIL", check,
                                   f"{rel}: code-graph points at missing {', '.join(missing)}", fix))
+            continue
+        if unverified:
+            results.append(Result("WARN", check,
+                                  f"{rel}: cannot verify {', '.join(unverified)}: the variable is "
+                                  "not set where the doctor runs",
+                                  "check that the variable is set in the environment the tool "
+                                  "starts from, or write the path out"))
             continue
         if tool == "opencode":
             paths = (data.get("skills") or {}).get("paths") or []
@@ -412,12 +533,12 @@ def check_server(ctx: Context, commands: list[str]) -> Result:
     uv = _which("uv")
     if uv:
         return Result("PASS", "server", f".github/code-graph/server.py present; uv at {uv}")
-    if any(_uses_uv(c) for c in commands):
-        return Result("FAIL", "server", "the MCP config runs uv, but uv is not on PATH",
+    if any(_bare_uv(c) for c in commands):
+        return Result("FAIL", "server", "the MCP config runs uv by name, but uv is not on PATH",
                       "install uv (https://docs.astral.sh/uv/) or point the MCP config at "
                       "a Python with the requirements installed")
-    detail = ("uv is not on PATH; the MCP configs use another launcher" if commands
-              else "uv is not on PATH")
+    detail = ("uv is not on PATH; the MCP configs launch the server by path or another "
+              "launcher" if commands else "uv is not on PATH")
     return Result("WARN", "server", detail,
                   "install uv (https://docs.astral.sh/uv/) so the graph builds with the "
                   "pinned requirements")
@@ -487,22 +608,32 @@ def check_git_hooks(ctx: Context) -> Result:
         return Result("SKIP", "hooks:git", "not a git repo")
     hooks = Path(hooks_rel)
     hooks = hooks if hooks.is_absolute() else ctx.project / hooks
-    bad = []
+    missing, foreign = [], []
     for name in GIT_HOOKS:
-        p = hooks / name
         try:
-            text = p.read_text(encoding="utf-8", errors="ignore")
+            text = (hooks / name).read_text(encoding="utf-8", errors="ignore")
         except OSError:
-            bad.append(f"{name} missing")
+            missing.append(name)
             continue
         if "server.py" not in text or "--update" not in text:
-            bad.append(f"{name} does not update the graph")
-    if bad:
-        return Result("WARN", "hooks:git", "; ".join(bad),
-                      "copy them: for h in post-commit post-merge post-rewrite; do cp "
-                      ".github/code-graph/$h \"$(git rev-parse --git-path hooks)/$h\"; "
-                      "chmod +x \"$(git rev-parse --git-path hooks)/$h\"; done")
-    return Result("PASS", "hooks:git", "post-commit, post-merge, post-rewrite update the graph")
+            foreign.append(name)
+    if not (missing or foreign):
+        return Result("PASS", "hooks:git", "post-commit, post-merge, post-rewrite update the graph")
+    detail, fix = [], []
+    if missing:
+        detail.append(", ".join(missing) + " missing")
+        fix.append(f"copy the missing ones: for h in {' '.join(missing)}; do cp "
+                   ".github/code-graph/$h \"$(git rev-parse --git-path hooks)/$h\"; "
+                   "chmod +x \"$(git rev-parse --git-path hooks)/$h\"; done")
+    if foreign:
+        one = len(foreign) == 1
+        detail.append(f"{', '.join(foreign)} {'belongs' if one else 'belong'} to something else "
+                      f"and {'does' if one else 'do'} not update the graph")
+        fix.append(f"do not replace {', '.join(foreign)}: add the line "
+                   "sh \"$(git rev-parse --show-toplevel)/.github/code-graph/<hook>\" || true "
+                   "once to each, at the end, or just before the last line when that line "
+                   "starts with exec")
+    return Result("WARN", "hooks:git", "; ".join(detail), "; ".join(fix))
 
 
 def _yaml_structure_error(text: str) -> str | None:
@@ -537,6 +668,8 @@ def check_openspec(ctx: Context) -> Result:
     if not p.is_file():
         return Result("FAIL", "openspec", "openspec/config.yaml is missing", fix)
     text = p.read_text(encoding="utf-8", errors="ignore")
+    if not any(line.strip() and not line.lstrip().startswith("#") for line in text.splitlines()):
+        return Result("FAIL", "openspec", "openspec/config.yaml is empty", fix)
     if yaml is not None:
         try:
             data = yaml.safe_load(text)

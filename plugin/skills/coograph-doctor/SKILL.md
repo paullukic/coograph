@@ -38,12 +38,12 @@ The checks, so you can explain any of them:
 | Check | Looks at |
 |---|---|
 | `graph` | `.code-graph/graph.db` exists, its node/edge/file counts; WARN when many functions have no call edges (built without tree-sitter) |
-| `graph-age` | graph older than the last commit (or the newest child repo's commit in a multi-repo workspace) |
+| `graph-age` | every committed file of an indexed kind matches the content hash the graph holds (child repos too in a multi-repo workspace); uncommitted edits are left out |
 | `server` | `.github/code-graph/server.py` and `requirements.txt`; `uv` on PATH |
-| `mcp:<tool>` | the code-graph entry in `.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`, `opencode.json`, and that every path in it exists |
+| `mcp:<tool>` | the code-graph entry in `.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`, `opencode.json` (JSONC where the tool accepts it), and that every path in it exists after the tool's own variables are expanded; WARN when a variable is not set where the doctor runs |
 | `markers` | `_TBD_` / `<!-- FILL` left in `.github/copilot-instructions.md`, `CLAUDE.md`, `AGENTS.md` (backticked mentions, as in the template guard line, do not count) |
 | `tools` | each installed tool's files; registry vs disk |
-| `hooks:git` | `post-commit`, `post-merge`, `post-rewrite` update the graph |
+| `hooks:git` | `post-commit`, `post-merge`, `post-rewrite` update the graph; tells a missing hook apart from one that belongs to another tool |
 | `openspec` | `openspec/config.yaml` exists and parses |
 | `hooks:claude` | every hook `.claude/settings.json` wires exists |
 | `sync` | template files sync kept as local edits, with the newer upstream copy waiting in `.coograph/upstream/` |
@@ -56,9 +56,9 @@ For each FAIL, then each WARN, offer the fix and wait for a yes before doing any
 
 | Check | Fix |
 |---|---|
-| `graph`, `graph-age` | the `coograph-rebuild-graph` skill (`build` for a missing or empty graph or the tree-sitter WARN, `update` for an old one) |
-| `server`, `mcp:<tool>`, `markers`, `tools`, `hooks:claude`, `openspec` | re-run `/coograph-init` on the project. Its Step 1b copies only what is missing and never overwrites a customized file without asking. For `markers`, offer to fill the listed lines directly instead |
-| `hooks:git` | the command on the `fix:` line (init Step 6h) |
+| `graph`, `graph-age` | the `coograph-rebuild-graph` skill (`build` for a missing or empty graph, the tree-sitter WARN, or a graph without file hashes; `update` for an old one), or the raw command on the `fix:` line |
+| `server`, `mcp:<tool>`, `markers`, `tools`, `hooks:claude`, `openspec` | re-run `/coograph-init` on the project. Its Step 1b adds what is missing and also offers to refresh template-managed files that differ from the template (skills, agents, `.claude/hooks/`, `.claude/settings.json`); before the user answers, list the differing files and ask which to keep. For `markers`, offer to fill the listed lines directly instead. For a config that is not valid JSON, fix its syntax by hand: init cannot merge into it either |
+| `hooks:git` | the command on the `fix:` line (init Step 6h) for a missing hook. Never copy over a hook that already exists: add the one line the `fix:` line names to it |
 | `sync` | show the diff between each parked file and the local one; the user decides per file. Never copy over a local edit unasked |
 
 A `tools` WARN about files on disk for an unregistered tool is the user's call: add the tool to `projects.json`, or delete the stray files. Never edit `projects.json` or delete files without that answer.

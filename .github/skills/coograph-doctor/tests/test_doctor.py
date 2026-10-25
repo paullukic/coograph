@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -69,7 +70,10 @@ def _commit(root: Path, rel: str, body: str, at: float) -> None:
     _git(root, "commit", "-q", "-m", f"edit {rel}", at=at)
 
 
-def build_graph(root: Path, functions: int = 3, calls: int = 2, edges: bool = True) -> Path:
+def build_graph(root: Path, functions: int = 3, calls: int = 2, edges: bool = True,
+                files: tuple[str, ...] = ("a.py",)) -> Path:
+    """A graph as builder.py leaves it: nodes, edges, and the content hash of
+    every indexed file as it is on disk now."""
     db = root / ".code-graph" / "graph.db"
     db.parent.mkdir(parents=True, exist_ok=True)
     if db.exists():
@@ -79,11 +83,16 @@ def build_graph(root: Path, functions: int = 3, calls: int = 2, edges: bool = Tr
         "CREATE TABLE nodes (id TEXT PRIMARY KEY, kind TEXT, name TEXT, file TEXT, "
         "start_line INT, end_line INT);"
         "CREATE TABLE edges (src TEXT, dst TEXT, kind TEXT);"
+        "CREATE TABLE file_hashes (file TEXT PRIMARY KEY, sha1 TEXT NOT NULL);"
     )
-    conn.execute("INSERT INTO nodes VALUES ('f1','file','a.py','a.py',NULL,NULL)")
+    for n, rel in enumerate(files):
+        conn.execute("INSERT INTO nodes VALUES (?, 'file', ?, ?, NULL, NULL)",
+                     (f"f{n + 1}", Path(rel).name, rel))
+        conn.execute("INSERT INTO file_hashes VALUES (?, ?)",
+                     (rel, hashlib.sha1((root / rel).read_bytes()).hexdigest()))
     for i in range(functions):
-        conn.execute("INSERT INTO nodes VALUES (?, 'function', ?, 'a.py', 1, 2)",
-                     (f"fn{i}", f"fn{i}"))
+        conn.execute("INSERT INTO nodes VALUES (?, 'function', ?, ?, 1, 2)",
+                     (f"fn{i}", f"fn{i}", files[0]))
     if edges:
         conn.execute("INSERT INTO edges VALUES ('f1','fn0','contains')")
         for i in range(min(calls, functions - 1)):
@@ -97,6 +106,7 @@ def make_project(base: Path, *, code_graph: bool = True, git: bool = True) -> tu
     """A project as a fully enabled init leaves it (Claude Code + VS Code +
     OpenCode, code-graph, git hooks), and a registry listing it."""
     root = base / "proj"
+    _write(root, "a.py", "def fn0():\n    return 0\n")
     _write(root, ".github/copilot-instructions.md", FILLED_INSTRUCTIONS)
     _write(root, ".github/instructions/testing.instructions.md", "# Testing\n")
     _write(root, ".github/skills/coograph-init/SKILL.md", "---\nname: coograph-init\n---\n")
@@ -223,19 +233,62 @@ class DoctorTests(unittest.TestCase):
     def test_commit_to_a_file_already_in_the_graph_warns(self):
         later = time.time() + 2 * 3600
         conn = sqlite3.connect(self.root / ".code-graph" / "graph.db")
-        conn.execute("INSERT INTO nodes VALUES ('f2','file','gen.py','build/gen.py',NULL,NULL)")
+        conn.execute("INSERT INTO file_hashes VALUES ('build/gen.py', 'old')")
         conn.commit()
         conn.close()
-        os.utime(self.root / ".code-graph" / "graph.db", (time.time(), time.time()))
         _write(self.root, "build/gen.py", "x = 1\n")
         _git(self.root, "add", "-f", "build/gen.py")
         _git(self.root, "commit", "-q", "-m", "gen", at=later)
         (r,) = self.only("graph-age", "WARN")
         self.assertIn("build/gen.py", r.detail)
 
-    def test_code_commit_within_tolerance_passes(self):
-        _commit(self.root, "a.py", "def fn0():\n    return 1\n", at=time.time() + 600)
+    def test_graph_updated_before_the_commit_passes(self):
+        """Review finding: the graph took the edit before it was committed; the
+        commit's --update then writes nothing, so the db keeps its old mtime."""
+        _write(self.root, "a.py", "def fn0():\n    return 1\n")
+        db = build_graph(self.root)
+        os.utime(db, (time.time() - 5 * 3600, time.time() - 5 * 3600))
+        _git(self.root, "add", "a.py")
+        _git(self.root, "commit", "-q", "-m", "edit", at=time.time() + 2 * 3600)
         self.assertEqual("PASS", statuses(doctor.run(self.root, self.registry))["graph-age"])
+
+    def test_pulled_commit_with_an_old_date_warns(self):
+        """Review finding: a pull brings commits dated before the graph was built."""
+        _commit(self.root, "a.py", "def fn0():\n    return 1\n", at=time.time() - 5 * 3600)
+        (r,) = self.only("graph-age", "WARN")
+        self.assertIn("a.py", r.detail)
+
+    def test_new_file_committed_warns(self):
+        _commit(self.root, "b.py", "x = 1\n", at=time.time() - 5 * 3600)
+        (r,) = self.only("graph-age", "WARN")
+        self.assertIn("b.py", r.detail)
+
+    def test_new_minified_script_passes(self):
+        """builder.py leaves minified scripts out, so a new one stales nothing."""
+        _commit(self.root, "app.js", "function f() {}\n", at=time.time())
+        build_graph(self.root, files=("a.py", "app.js"))
+        _commit(self.root, "lib/vendor.min.js", "var a=1;\n", at=time.time())
+        self.assertEqual("PASS", statuses(doctor.run(self.root, self.registry))["graph-age"])
+
+    def test_deleted_file_still_in_the_graph_warns(self):
+        _git(self.root, "rm", "-q", "a.py")
+        _git(self.root, "commit", "-q", "-m", "rm")
+        (r,) = self.only("graph-age", "WARN")
+        self.assertIn("a.py", r.detail)
+
+    def test_uncommitted_edit_passes(self):
+        """No git hook could have seen it yet."""
+        _write(self.root, "a.py", "def fn0():\n    return 2\n")
+        _write(self.root, "c.py", "x = 1\n")
+        self.assertEqual(self.baseline, statuses(doctor.run(self.root, self.registry)))
+
+    def test_graph_without_file_hashes_warns(self):
+        conn = sqlite3.connect(self.root / ".code-graph" / "graph.db")
+        conn.execute("DROP TABLE file_hashes")
+        conn.commit()
+        conn.close()
+        (r,) = self.only("graph-age", "WARN")
+        self.assertIn("--build", r.fix)
 
     def test_server_missing(self):
         (self.root / ".github" / "code-graph" / "server.py").unlink()
@@ -269,6 +322,63 @@ class DoctorTests(unittest.TestCase):
             "mcp": {"code-graph": {"type": "local", "command": ["uv", "run", dead]}}}))
         (r,) = self.only("mcp:opencode", "FAIL")
         self.assertIn("gone", r.detail)
+
+    def test_jsonc_configs_parse(self):
+        """Review finding: VS Code, Cursor and OpenCode read their configs as JSONC."""
+        args = ", ".join(json.dumps(a.replace(".github", "${workspaceFolder}/.github"))
+                         for a in UV_ARGS)
+        _write(self.root, ".vscode/mcp.json",
+               '{\n  // the graph\n  "servers": {\n    "code-graph": {"type": "stdio", '
+               f'"command": "uv", "args": [{args},],}},\n    /* "x": "a // b", */\n  }},\n}}\n')
+        _write(self.root, "opencode.json",
+               '{"skills": {"paths": [".github/skills",]}, // skills\n "mcp": {"code-graph": '
+               '{"type": "local", "command": ' + json.dumps(["uv", *UV_ARGS]) + ', "cwd": "."}}}\n')
+        self.assertEqual(self.baseline, statuses(doctor.run(self.root, self.registry)))
+
+    def test_broken_json_fix_is_not_a_reinit(self):
+        _write(self.root, ".vscode/mcp.json", '{"servers": {')
+        (r,) = self.only("mcp:vscode", "FAIL")
+        self.assertIn("not valid JSON", r.detail)
+        self.assertNotIn("coograph-init", r.fix)
+
+    def test_uv_by_path_needs_no_uv_on_path(self):
+        """Review finding: sync.py writes an absolute uv path when uv is off PATH."""
+        uv = self.base / "bin" / "uv"
+        _write(self.base, "bin/uv", "")
+        _write(self.root, ".mcp.json", json.dumps({"mcpServers": {"code-graph": {
+            "command": str(uv), "args": UV_ARGS}}}))
+        _write(self.root, ".vscode/mcp.json", json.dumps({"servers": {"code-graph": {
+            "command": str(uv), "args": UV_ARGS}}}))
+        _write(self.root, "opencode.json", json.dumps({
+            "skills": {"paths": [".github/skills"]},
+            "mcp": {"code-graph": {"type": "local", "command": [str(uv), *UV_ARGS]}}}))
+        with mock.patch.object(doctor, "_which", lambda name: None):
+            got = statuses(doctor.run(self.root, self.registry))
+        self.assertEqual("WARN", got["server"])
+        for check in ("mcp:claude", "mcp:vscode", "mcp:opencode"):
+            self.assertEqual("PASS", got[check], check)
+
+    def test_env_variables_the_tool_expands(self):
+        """Review finding: Claude Code expands ${VAR} and ${VAR:-default}, VS Code
+        ${env:NAME} and ${userHome}, OpenCode {env:NAME}."""
+        root = str(self.root)
+        _write(self.root, ".mcp.json", json.dumps({"mcpServers": {"code-graph": {
+            "command": "uv", "args": ["run", "${CG_ROOT}/.github/code-graph/server.py",
+                                      "${CG_UNSET:-" + root + "}/.github/code-graph/server.py"]}}}))
+        _write(self.root, ".vscode/mcp.json", json.dumps({"servers": {"code-graph": {
+            "command": "uv", "args": ["run", "${env:CG_ROOT}/.github/code-graph/server.py"]}}}))
+        _write(self.root, "opencode.json", json.dumps({
+            "skills": {"paths": [".github/skills"]},
+            "mcp": {"code-graph": {"type": "local",
+                                   "command": ["uv", "run", "{env:CG_ROOT}/.github/code-graph/server.py"]}}}))
+        with mock.patch.dict(os.environ, {"CG_ROOT": root}):
+            os.environ.pop("CG_UNSET", None)
+            self.assertEqual(self.baseline, statuses(doctor.run(self.root, self.registry)))
+        with mock.patch.dict(os.environ):
+            os.environ.pop("CG_ROOT", None)
+            got = statuses(doctor.run(self.root, self.registry))
+        for check in ("mcp:claude", "mcp:vscode", "mcp:opencode"):
+            self.assertEqual("WARN", got[check], check)
 
     def test_marker_left_in_agents_md(self):
         _write(self.root, "AGENTS.md", "# Agent Context\n\n| Build | _TBD_ |\n")
@@ -307,11 +417,24 @@ class DoctorTests(unittest.TestCase):
     def test_other_tools_skills_are_not_a_codex_install(self):
         """Found on coograph-website: .agents/skills/ held Firebase skills."""
         _write(self.root, ".agents/skills/firebase-basics/SKILL.md", "# firebase\n")
-        _write(self.root, ".github/agents/my-own.agent.md", "# mine\n")
         self.assertEqual(self.baseline, statuses(doctor.run(self.root, self.registry)))
         _write(self.root, ".agents/skills/coograph-init/SKILL.md", "# coograph\n")
         (r,) = self.only("tools", "WARN")
         self.assertIn("codex", r.detail)
+
+    def test_users_own_agents_are_not_a_vscode_install(self):
+        data = json.loads(self.registry.read_text(encoding="utf-8"))
+        data["projects"][0]["tools"] = ["claude", "opencode"]
+        self.registry.write_text(json.dumps(data), encoding="utf-8")
+        shutil.rmtree(self.root / ".github" / "agents")
+        _write(self.root, ".github/agents/my-own.agent.md", "# mine\n")
+        (r,) = [r for r in doctor.run(self.root, self.registry) if r.check == "tools"]
+        self.assertEqual("PASS", r.status, r)
+        self.assertNotIn("vscode", r.detail)
+        _write(self.root, ".github/agents/reviewer.agent.md", "# Reviewer\n")
+        (r,) = [r for r in doctor.run(self.root, self.registry) if r.check == "tools"]
+        self.assertEqual("WARN", r.status, r)
+        self.assertIn("vscode", r.detail)
 
     def test_unknown_tool_id_warns(self):
         data = json.loads(self.registry.read_text(encoding="utf-8"))
@@ -322,7 +445,19 @@ class DoctorTests(unittest.TestCase):
 
     def test_post_merge_hook_missing_warns(self):
         (self.root / ".git" / "hooks" / "post-merge").unlink()
-        self.only("hooks:git", "WARN")
+        (r,) = self.only("hooks:git", "WARN")
+        self.assertIn("for h in post-merge;", r.fix)
+
+    def test_foreign_hook_is_never_copied_over(self):
+        """Review finding: git lfs, husky or lefthook may own post-commit."""
+        lfs = "#!/bin/sh\ngit lfs post-commit \"$@\"\n"
+        (self.root / ".git" / "hooks" / "post-commit").write_text(lfs, encoding="utf-8")
+        (self.root / ".git" / "hooks" / "post-rewrite").unlink()
+        (r,) = self.only("hooks:git", "WARN")
+        self.assertIn("post-commit belongs to something else", r.detail)
+        self.assertIn("for h in post-rewrite;", r.fix)
+        self.assertNotRegex(r.fix, r"for h in [^;]*post-commit")
+        self.assertIn("do not replace post-commit", r.fix)
 
     def test_openspec_config_with_tab_fails(self):
         _write(self.root, "openspec/config.yaml", "schema: spec-driven\nmodels:\n\tmode: unset\n")
@@ -335,6 +470,32 @@ class DoctorTests(unittest.TestCase):
         (r,) = [r for r in results if r.check == "openspec"]
         self.assertEqual("PASS", r.status)
         self.assertIn("structural check", r.detail)
+
+    def test_openspec_config_with_pyyaml(self):
+        """Review finding: the PyYAML branch ran on no CI runner."""
+        class YAMLError(Exception):
+            pass
+
+        def safe_load(text):
+            if "\t" in text:
+                raise YAMLError("found character '\\t'")
+            return None if text.strip().startswith("#") else {"schema": "spec-driven"}
+        fake = types.SimpleNamespace(YAMLError=YAMLError, safe_load=safe_load)
+        with mock.patch.object(doctor, "yaml", fake):
+            self.assertEqual(self.baseline, statuses(doctor.run(self.root, self.registry)))
+            _write(self.root, "openspec/config.yaml", "schema: spec-driven\n\tmode: x\n")
+            (r,) = self.only("openspec", "FAIL")
+            self.assertIn("does not parse", r.detail)
+            _write(self.root, "openspec/config.yaml", "# only a comment\nx\n")
+            (r,) = self.only("openspec", "FAIL")
+            self.assertIn("not a mapping", r.detail)
+
+    def test_empty_openspec_config_fails_either_way(self):
+        _write(self.root, "openspec/config.yaml", "# nothing here\n\n")
+        for parser in (None, types.SimpleNamespace(YAMLError=Exception, safe_load=lambda t: None)):
+            with mock.patch.object(doctor, "yaml", parser):
+                (r,) = self.only("openspec", "FAIL")
+            self.assertIn("empty", r.detail)
 
     def test_openspec_config_missing_fails(self):
         (self.root / "openspec" / "config.yaml").unlink()
@@ -476,7 +637,7 @@ class ModeTests(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(child)], check=True)
         _git(child, "add", "-A")
         _git(child, "commit", "-q", "-m", "init", at=time.time() - 3 * 3600)
-        build_graph(ws)
+        build_graph(ws, files=("api/a.py",))
         with mock.patch.object(doctor, "_which", lambda name: "/usr/bin/uv"):
             self.assertEqual("PASS", statuses(doctor.run(ws, None))["graph-age"])
             _commit(child, "a.py", "def fn0():\n    return 2\n", at=time.time() + 2 * 3600)
