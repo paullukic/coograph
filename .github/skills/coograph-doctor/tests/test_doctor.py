@@ -380,6 +380,18 @@ class DoctorTests(unittest.TestCase):
         for check in ("mcp:claude", "mcp:vscode", "mcp:opencode"):
             self.assertEqual("WARN", got[check], check)
 
+    def test_variables_the_doctor_does_not_model_warn(self):
+        """Review finding: ${input:x} or {file:x} is the tool's to expand, not a dead path."""
+        _write(self.root, ".vscode/mcp.json", json.dumps({"servers": {"code-graph": {
+            "command": "uv", "args": ["run", "${input:graphRoot}/.github/code-graph/server.py"]}}}))
+        _write(self.root, "opencode.json", json.dumps({
+            "skills": {"paths": [".github/skills"]},
+            "mcp": {"code-graph": {"type": "local",
+                                   "command": ["uv", "run", "{file:./root.txt}/server.py"]}}}))
+        got = statuses(doctor.run(self.root, self.registry))
+        self.assertEqual("WARN", got["mcp:vscode"])
+        self.assertEqual("WARN", got["mcp:opencode"])
+
     def test_marker_left_in_agents_md(self):
         _write(self.root, "AGENTS.md", "# Agent Context\n\n| Build | _TBD_ |\n")
         (r,) = self.only("markers", "FAIL")
@@ -458,6 +470,15 @@ class DoctorTests(unittest.TestCase):
         self.assertIn("for h in post-rewrite;", r.fix)
         self.assertNotRegex(r.fix, r"for h in [^;]*post-commit")
         self.assertIn("do not replace post-commit", r.fix)
+        self.assertIn('.github/code-graph/post-commit" || true once, before its first exit', r.fix)
+
+    def test_foreign_hook_in_another_language(self):
+        """Review finding: an appended sh line would break a python hook."""
+        hook = "#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n"
+        (self.root / ".git" / "hooks" / "post-merge").write_text(hook, encoding="utf-8")
+        (r,) = self.only("hooks:git", "WARN")
+        self.assertIn("post-merge: it is not a shell script", r.fix)
+        self.assertNotIn("|| true", r.fix)
 
     def test_openspec_config_with_tab_fails(self):
         _write(self.root, "openspec/config.yaml", "schema: spec-driven\nmodels:\n\tmode: unset\n")
@@ -645,6 +666,22 @@ class ModeTests(unittest.TestCase):
         (r,) = [r for r in results if r.check == "graph-age"]
         self.assertEqual("WARN", r.status)
         self.assertIn("api/a.py", r.detail)
+
+    def test_project_in_a_subfolder_of_a_repo_ignores_uncommitted_edits(self):
+        """Review finding: diff names paths from the repo top, ls-files from the project."""
+        outer = self.base / "outer"
+        root = outer / "sub"
+        _write(root, "a.py", "def fn0():\n    return 0\n")
+        _write(root, ".github/code-graph/server.py", "# server\n")
+        subprocess.run(["git", "init", "-q", str(outer)], check=True)
+        _git(outer, "add", "-A")
+        _git(outer, "commit", "-q", "-m", "init")
+        build_graph(root)
+        _write(root, "a.py", "def fn0():\n    return 2\n")
+        with mock.patch.object(doctor, "_which", lambda name: "/usr/bin/uv"):
+            self.assertEqual("PASS", statuses(doctor.run(root, None))["graph-age"])
+            _git(outer, "commit", "-q", "-am", "edit")
+            self.assertEqual("WARN", statuses(doctor.run(root, None))["graph-age"])
 
     def test_devin_and_windsurf_ids_are_one_tool(self):
         root, registry = make_project(self.base)

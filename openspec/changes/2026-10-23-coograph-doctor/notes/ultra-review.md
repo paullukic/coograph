@@ -19,6 +19,18 @@
 
 13 of the new tests fail against 8d8f45e's doctor.py; the two coverage tests (9, 10) pass on both, as expected.
 
+## Round 2: delta, 9025755 (2026-10-25)
+
+8 agents, 0.45M tokens, 4 min. Verdict REQUEST_CHANGES. Previous: 9 of 10 fixed; #7 partly (variables the doctor does not model still FAILed).
+
+| # | Sev | Where | Finding | Fix |
+|---|---|---|---|---|
+| 11 | Warning | check_graph_age | `git diff --name-only` names paths from the repo top, `ls-files` from the project: a project in a subfolder WARNed on uncommitted edits | `--relative` |
+| 12 | Warning | _expand (= #7 rest) | `${input:x}`, `${workspaceFolderBasename}`, `{file:x}` left in the path, FAIL missing | any leftover variable is WARN cannot verify |
+| 13 | Warning | check_git_hooks | foreign-hook fix had a `<hook>` placeholder, only covered a trailing exec, would break a non-shell hook | one concrete line per hook, before the first exit or exec; a non-shell hook gets call-it-in-its-language |
+
+4 new tests, each fails against 9025755.
+
 ### Follow-up, not fixed here (pre-existing init text)
 
 - `.github/skills/coograph-init/SKILL.md` Step 6e pip fallback writes `${workspaceFolder}` into every config, including `.mcp.json` and `opencode.json`, which pass it on literally; the doctor FAILs that config and its re-init fix writes it again. The OpenCode pip variant also passes `requirements.txt` as a python argument. Fix: project-relative paths outside VS Code, drop requirements.txt from the OpenCode python args. Separate change.

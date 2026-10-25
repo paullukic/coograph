@@ -58,7 +58,7 @@ For each FAIL, then each WARN, offer the fix and wait for a yes before doing any
 |---|---|
 | `graph`, `graph-age` | the `coograph-rebuild-graph` skill (`build` for a missing or empty graph, the tree-sitter WARN, or a graph without file hashes; `update` for an old one), or the raw command on the `fix:` line |
 | `server`, `mcp:<tool>`, `markers`, `tools`, `hooks:claude`, `openspec` | re-run `/coograph-init` on the project. Its Step 1b adds what is missing and also offers to refresh template-managed files that differ from the template (skills, agents, `.claude/hooks/`, `.claude/settings.json`); before the user answers, list the differing files and ask which to keep. For `markers`, offer to fill the listed lines directly instead. For a config that is not valid JSON, fix its syntax by hand: init cannot merge into it either |
-| `hooks:git` | the command on the `fix:` line (init Step 6h) for a missing hook. Never copy over a hook that already exists: add the one line the `fix:` line names to it |
+| `hooks:git` | the command on the `fix:` line (init Step 6h) for a missing hook. Never copy over a hook that already exists: add the one line the `fix:` line names, before its first `exit` or `exec`; a hook in another language calls the coograph hook in its own language |
 | `sync` | show the diff between each parked file and the local one; the user decides per file. Never copy over a local edit unasked |
 
 A `tools` WARN about files on disk for an unregistered tool is the user's call: add the tool to `projects.json`, or delete the stray files. Never edit `projects.json` or delete files without that answer.

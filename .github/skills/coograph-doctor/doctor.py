@@ -88,6 +88,8 @@ ENV_VAR_RE = {
     "opencode": re.compile(r"\{env:(\w+)\}"),
 }
 WORKSPACE_VARS = ("${workspaceFolder}", "${workspaceRoot}")
+LEFTOVER_VAR_RE = re.compile(r"\$\{[^}]+\}|\{(?:env|file):[^}]+\}")
+SHELL_SHEBANG_RE = re.compile(r"\b(sh|bash|dash|zsh|ksh|ash)\b")
 _CMD = "uv run -p \">=3.10\" --with-requirements .github/code-graph/requirements.txt .github/code-graph/server.py"
 BUILD_CMD = _CMD + " --build"
 UPDATE_CMD = _CMD + " --update"
@@ -342,7 +344,8 @@ def check_graph_age(ctx: Context) -> Result:
     stale: set[str] = set()
     for repo, prefix in repos:
         tracked = _git_paths(repo, "ls-files")
-        uncommitted = _git_paths(repo, "diff", "--name-only", "HEAD") | _git_paths(
+        # --relative: diff names paths from the repo top, ls-files from the project
+        uncommitted = _git_paths(repo, "diff", "--relative", "--name-only", "HEAD") | _git_paths(
             repo, "ls-files", "--others", "--exclude-standard")
         for rel in tracked - uncommitted:
             full = prefix + rel
@@ -456,6 +459,9 @@ def _expand(raw: str, tool: str, project: Path) -> tuple[str, list[str], list[st
             return m.group(0)
         return value
     out = ENV_VAR_RE[tool].sub(env, out)
+    # ${input:x}, ${workspaceFolderBasename}, {file:x}: expanded by the tool, not modelled here
+    unknown += [m for m in LEFTOVER_VAR_RE.findall(out)
+                if m not in WORKSPACE_VARS and m not in unknown]
     return out, literal, unknown
 
 
@@ -608,7 +614,7 @@ def check_git_hooks(ctx: Context) -> Result:
         return Result("SKIP", "hooks:git", "not a git repo")
     hooks = Path(hooks_rel)
     hooks = hooks if hooks.is_absolute() else ctx.project / hooks
-    missing, foreign = [], []
+    missing, foreign, shells = [], [], {}
     for name in GIT_HOOKS:
         try:
             text = (hooks / name).read_text(encoding="utf-8", errors="ignore")
@@ -617,6 +623,8 @@ def check_git_hooks(ctx: Context) -> Result:
             continue
         if "server.py" not in text or "--update" not in text:
             foreign.append(name)
+            first = text.splitlines()[0] if text else ""
+            shells[name] = not first.startswith("#!") or bool(SHELL_SHEBANG_RE.search(first))
     if not (missing or foreign):
         return Result("PASS", "hooks:git", "post-commit, post-merge, post-rewrite update the graph")
     detail, fix = [], []
@@ -629,10 +637,14 @@ def check_git_hooks(ctx: Context) -> Result:
         one = len(foreign) == 1
         detail.append(f"{', '.join(foreign)} {'belongs' if one else 'belong'} to something else "
                       f"and {'does' if one else 'do'} not update the graph")
-        fix.append(f"do not replace {', '.join(foreign)}: add the line "
-                   "sh \"$(git rev-parse --show-toplevel)/.github/code-graph/<hook>\" || true "
-                   "once to each, at the end, or just before the last line when that line "
-                   "starts with exec")
+        for name in foreign:
+            if shells[name]:
+                fix.append(f"do not replace {name}: add the line sh \"$(git rev-parse "
+                           f"--show-toplevel)/.github/code-graph/{name}\" || true once, before "
+                           "its first exit or exec line, or at the end when it has none")
+            else:
+                fix.append(f"do not replace {name}: it is not a shell script, so call "
+                           f".github/code-graph/{name} from it in its own language")
     return Result("WARN", "hooks:git", "; ".join(detail), "; ".join(fix))
 
 
